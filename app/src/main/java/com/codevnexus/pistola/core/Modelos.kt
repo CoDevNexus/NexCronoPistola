@@ -100,6 +100,7 @@ object ChipModo {
     const val HEX_DEC = "HEX_DEC"  // últimos N caracteres hex convertidos a decimal
     const val COMPLETO = "COMPLETO"
     const val TABLA = "TABLA"      // tabla EPC → chip importada
+    const val SEGMENTO = "SEGMENTO" // un tramo del EPC (posición + largo), en hex o decimal
 }
 
 data class Ajustes(
@@ -128,6 +129,9 @@ data class Ajustes(
     val configurarPistola: Boolean = true,
     val gatilloContinuo: Boolean = true,
     val pitidoPistola: Boolean = false,
+    val segInicio: Int = 5,        // posición (1 = primer carácter del EPC)
+    val segLargo: Int = 4,
+    val segHex: Boolean = true,
 ) {
     val nombrePunto: String get() = if (modo == Modo.SALIDA) "SALIDA" else punto.ifBlank { "PC" }
     val vinculado: Boolean get() = servidor.isNotBlank() && token.isNotBlank()
@@ -165,6 +169,9 @@ data class Ajustes(
                 configurarPistola = p.getBoolean("configurarPistola", true),
                 gatilloContinuo = p.getBoolean("gatilloContinuo", true),
                 pitidoPistola = p.getBoolean("pitidoPistola", false),
+                segInicio = p.getInt("segInicio", d.segInicio),
+                segLargo = p.getInt("segLargo", d.segLargo),
+                segHex = p.getBoolean("segHex", d.segHex),
             )
             if (a.dispositivoId.isBlank()) {
                 a = a.copy(dispositivoId = UUID.randomUUID().toString())
@@ -200,6 +207,9 @@ data class Ajustes(
                 .putBoolean("configurarPistola", a.configurarPistola)
                 .putBoolean("gatilloContinuo", a.gatilloContinuo)
                 .putBoolean("pitidoPistola", a.pitidoPistola)
+                .putInt("segInicio", a.segInicio)
+                .putInt("segLargo", a.segLargo)
+                .putBoolean("segHex", a.segHex)
                 .apply()
         }
 
@@ -215,8 +225,43 @@ object ChipDecoder {
             ChipModo.COMPLETO -> e
             ChipModo.HEX_DEC -> e.takeLast(a.chipDigitos.coerceIn(1, 15)).toLongOrNull(16)?.toString() ?: e
             ChipModo.TABLA -> tabla[e] ?: ("?" + ultimos(e, a.chipDigitos))
+            ChipModo.SEGMENTO -> segmento(e, a.segInicio, a.segLargo, a.segHex) ?: e
             else -> ultimos(e, a.chipDigitos)
         }
+    }
+
+    fun segmento(e: String, inicio: Int, largo: Int, hex: Boolean): String? {
+        val i = inicio - 1
+        if (i < 0 || largo < 1 || i + largo > e.length) return null
+        val t = e.substring(i, i + largo)
+        return if (hex) {
+            if (largo > 15) null else t.toLongOrNull(16)?.toString()
+        } else {
+            if (!t.all(Char::isDigit)) null else t.trimStart('0').ifEmpty { "0" }
+        }
+    }
+
+    /**
+     * Busca dónde está el número impreso dentro del EPC.
+     * @return (posición 1-based, largo, esHex) o null si no aparece.
+     */
+    fun detectar(epc: String, numero: String): Triple<Int, Int, Boolean>? {
+        val e = epc.trim().uppercase()
+        val n = numero.trim().toLongOrNull() ?: return null
+        val candidatos = ArrayList<Pair<String, Boolean>>()
+        for (largo in listOf(4, 6, 8, 2, 3, 5, 7)) {
+            val h = n.toString(16).uppercase()
+            if (h.length <= largo) candidatos += h.padStart(largo, '0') to true
+        }
+        for (largo in listOf(4, 5, 6, 8, 3, 7)) {
+            val d = n.toString()
+            if (d.length <= largo) candidatos += d.padStart(largo, '0') to false
+        }
+        for ((patron, hex) in candidatos) {
+            val i = e.indexOf(patron)
+            if (i >= 0 && segmento(e, i + 1, patron.length, hex) == n.toString()) return Triple(i + 1, patron.length, hex)
+        }
+        return null
     }
 
     private fun ultimos(e: String, n: Int): String {

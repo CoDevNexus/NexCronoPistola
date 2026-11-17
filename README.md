@@ -4,8 +4,12 @@ App Android (`com.codevnexus.pistola`) para capturar chips con pistolas RFID UHF
 
 NexCrono · CodevNexus · codevnexus.tech
 
-## Versión 1.3.0
+## Versión 1.3.1
 - **Vinculación con NexCrono por QR.** Se escanea con la app, con la cámara del teléfono (enlace `nexcrono://`) o con el lector 2D de la pistola. Cada teléfono recibe su propio token, que se puede revocar desde NexCrono. La URL se puede dejar vacía y configurar después.
+- **Número de chip en cualquier formato:**
+  - Opción *Segmento del EPC* (posición, largo, hexadecimal o decimal).
+  - Preajuste **TimingSense** (`00D6 01BE 0000…` → 446).
+  - *Detectar con un chip*: lees un chip, escribes el número impreso y la app encuentra el formato sola.
 - **Lista de inscritos:** al capturar un chip, la app muestra **dorsal, nombre y categoría** y avisa si el chip no está inscrito.
 - **Pestaña Control:** muestra quién **falta por pasar** (en la salida, quién no se leyó en el corral), con buscador. Si tocas un atleta, lo registras a mano.
 - **Dorsal manual** para chips que no leen. También se pueden leer dorsales con el **código de barras** si la pistola tiene lector 2D. Quedan marcados como `manual` o `barras`.

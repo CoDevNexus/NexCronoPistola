@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -73,6 +74,9 @@ fun AjustesScreen() {
     var a by remember(guardado) { mutableStateOf(guardado) }
     var digitosTxt by remember(guardado) { mutableStateOf(guardado.chipDigitos.toString()) }
     var ventanaTxt by remember(guardado) { mutableStateOf(guardado.ventanaSeg.toString()) }
+    var segInicioTxt by remember(guardado) { mutableStateOf(guardado.segInicio.toString()) }
+    var segLargoTxt by remember(guardado) { mutableStateOf(guardado.segLargo.toString()) }
+    var numeroImpreso by remember { mutableStateOf("") }
     var mensaje by remember { mutableStateOf<String?>(null) }
     var confirmarBorrado by remember { mutableStateOf(false) }
     var confirmarDesvincular by remember { mutableStateOf(false) }
@@ -82,14 +86,18 @@ fun AjustesScreen() {
     var nuevoEvento by remember { mutableStateOf<String?>(null) }
 
     val cambios = a != guardado ||
-        digitosTxt != guardado.chipDigitos.toString() || ventanaTxt != guardado.ventanaSeg.toString()
+        digitosTxt != guardado.chipDigitos.toString() || ventanaTxt != guardado.ventanaSeg.toString() ||
+        segInicioTxt != guardado.segInicio.toString() || segLargoTxt != guardado.segLargo.toString()
+
+    fun conTextos(x: com.codevnexus.pistola.core.Ajustes) = x.copy(
+        chipDigitos = digitosTxt.toIntOrNull()?.coerceIn(1, 24) ?: x.chipDigitos,
+        ventanaSeg = ventanaTxt.toIntOrNull()?.coerceIn(1, 600) ?: x.ventanaSeg,
+        segInicio = segInicioTxt.toIntOrNull()?.coerceIn(1, 64) ?: x.segInicio,
+        segLargo = segLargoTxt.toIntOrNull()?.coerceIn(1, 15) ?: x.segLargo,
+    )
 
     fun guardar() {
-        val final = a.copy(
-            chipDigitos = digitosTxt.toIntOrNull()?.coerceIn(1, 24) ?: a.chipDigitos,
-            ventanaSeg = ventanaTxt.toIntOrNull()?.coerceIn(1, 600) ?: a.ventanaSeg,
-        )
-        Engine.guardarAjustes(final)
+        Engine.guardarAjustes(conTextos(a))
         mensaje = "Ajustes guardados"
     }
 
@@ -402,6 +410,69 @@ fun AjustesScreen() {
                         "la app muestra directamente el dorsal y el nombre.",
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // Detección automática con un chip real
+                val epcUltimo = ultimaEpc
+                Column(
+                    Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                        .background(MaterialTheme.colorScheme.surfaceContainer, androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                        .padding(12.dp)
+                ) {
+                    Text("Detectar con un chip", fontWeight = FontWeight.Bold)
+                    Text(
+                        if (epcUltimo == null) "Lee un chip con la pistola y escribe aquí el número impreso en él."
+                        else "Último chip leído: $epcUltimo. Escribe el número impreso en ese chip.",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = numeroImpreso, onValueChange = { numeroImpreso = it.filter(Char::isDigit).take(10) },
+                            label = { Text("Número impreso") }, singleLine = true, modifier = Modifier.weight(1f),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        )
+                        Button(
+                            enabled = epcUltimo != null && numeroImpreso.isNotEmpty(),
+                            onClick = {
+                                val r = ChipDecoder.detectar(epcUltimo ?: "", numeroImpreso)
+                                if (r == null) {
+                                    mensaje = "No encontré el $numeroImpreso dentro del EPC $epcUltimo. " +
+                                        "¿Seguro que es el chip que leíste último? Si el número no está en el EPC, usa la tabla EPC → chip."
+                                } else {
+                                    val (ini, largo, hex) = r
+                                    a = a.copy(chipModo = ChipModo.SEGMENTO, segInicio = ini, segLargo = largo, segHex = hex)
+                                    segInicioTxt = ini.toString(); segLargoTxt = largo.toString()
+                                    mensaje = "Encontrado: posición $ini, $largo caracteres, " +
+                                        (if (hex) "en hexadecimal" else "en decimal") + ". Toca GUARDAR AJUSTES para aplicarlo."
+                                }
+                            },
+                        ) { Text("Detectar") }
+                    }
+                }
+                Opcion(
+                    a.chipModo == ChipModo.SEGMENTO, "Segmento del EPC",
+                    "Un tramo del EPC. TimingSense: 00D6 01BE 0000… → 446",
+                ) { a = a.copy(chipModo = ChipModo.SEGMENTO) }
+                if (a.chipModo == ChipModo.SEGMENTO) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = segInicioTxt, onValueChange = { segInicioTxt = it.filter(Char::isDigit).take(2) },
+                            label = { Text("Desde posición") }, singleLine = true, modifier = Modifier.weight(1f),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        )
+                        OutlinedTextField(
+                            value = segLargoTxt, onValueChange = { segLargoTxt = it.filter(Char::isDigit).take(2) },
+                            label = { Text("Caracteres") }, singleLine = true, modifier = Modifier.weight(1f),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Está en hexadecimal", modifier = Modifier.weight(1f))
+                        Switch(checked = a.segHex, onCheckedChange = { a = a.copy(segHex = it) })
+                    }
+                    TextButton(onClick = {
+                        a = a.copy(chipModo = ChipModo.SEGMENTO, segInicio = 5, segLargo = 4, segHex = true)
+                        segInicioTxt = "5"; segLargoTxt = "4"
+                    }) { Text("Usar formato TimingSense") }
+                }
                 Opcion(a.chipModo == ChipModo.ULTIMOS, "Últimos dígitos del EPC", "Ej.: …000001234 → 1234") {
                     a = a.copy(chipModo = ChipModo.ULTIMOS)
                 }
@@ -414,7 +485,7 @@ fun AjustesScreen() {
                 Opcion(a.chipModo == ChipModo.COMPLETO, "EPC completo", null) {
                     a = a.copy(chipModo = ChipModo.COMPLETO)
                 }
-                if (a.chipModo != ChipModo.COMPLETO) {
+                if (a.chipModo == ChipModo.ULTIMOS || a.chipModo == ChipModo.HEX_DEC || a.chipModo == ChipModo.TABLA) {
                     OutlinedTextField(
                         value = digitosTxt, onValueChange = { digitosTxt = it.filter(Char::isDigit).take(2) },
                         label = { Text("Cantidad de dígitos") }, singleLine = true,
@@ -431,7 +502,7 @@ fun AjustesScreen() {
                 Spacer(Modifier.height(8.dp))
                 val epcPrueba = ultimaEpc
                 if (epcPrueba != null) {
-                    val prueba = a.copy(chipDigitos = digitosTxt.toIntOrNull() ?: a.chipDigitos)
+                    val prueba = conTextos(a)
                     Text("Prueba con el último chip leído:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(epcPrueba, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
                     Text(

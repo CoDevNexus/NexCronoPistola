@@ -203,10 +203,11 @@ fun LecturaScreen(irAPistola: () -> Unit) {
                         if (ultimo != null && ultimo.dorsal == null && control.total > 0) Etiqueta("NO INSCRITO", Rojo)
                         if (ultimo != null && ultimo.origen != "vivo") Etiqueta(ultimo.origen.uppercase(), Naranja)
                     }
+                    val grande = ultimo?.numero ?: "—"
                     Text(
-                        ultimo?.numero ?: "—",
-                        fontSize = 76.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth(), maxLines = 1,
+                        grande,
+                        fontSize = tamanoNumero(grande), fontWeight = FontWeight.Black, textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(), maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
                     )
                     if (ultimo?.nombre != null) {
                         Text(
@@ -301,6 +302,15 @@ fun LecturaScreen(irAPistola: () -> Unit) {
     }
 }
 
+/** Achica la letra del número grande según su largo para que siempre quepa en una línea. */
+fun tamanoNumero(t: String) = when {
+    t.length <= 5 -> 76.sp
+    t.length <= 7 -> 58.sp
+    t.length <= 10 -> 42.sp
+    t.length <= 16 -> 28.sp
+    else -> 20.sp
+}
+
 fun colorBateria(b: Int): Color = when {
     b <= 15 -> Rojo
     b <= 35 -> Amarillo
@@ -357,7 +367,11 @@ private fun FilaPasada(p: Pasada, hayInscritos: Boolean) {
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(p.numero, fontSize = 26.sp, fontWeight = FontWeight.Black, modifier = Modifier.width(96.dp), maxLines = 1)
+        Text(
+            p.numero, fontSize = when { p.numero.length <= 5 -> 26.sp; p.numero.length <= 8 -> 18.sp; else -> 12.sp },
+            fontWeight = FontWeight.Black, modifier = Modifier.width(96.dp), maxLines = 1, softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+        )
         Column(Modifier.weight(1f)) {
             if (p.nombre != null) {
                 Text(p.nombre ?: "", fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)

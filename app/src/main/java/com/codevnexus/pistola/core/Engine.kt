@@ -130,7 +130,9 @@ object Engine {
         val antes = ajustes.value
         ajustes.value = a
         Ajustes.guardar(app, a)
-        if (a.chipModo != antes.chipModo || a.chipDigitos != antes.chipDigitos) reasignarPasadas()
+        if (a.chipModo != antes.chipModo || a.chipDigitos != antes.chipDigitos ||
+            a.segInicio != antes.segInicio || a.segLargo != antes.segLargo || a.segHex != antes.segHex
+        ) reasignarPasadas()
         if (a.potencia != antes.potencia && a.configurarPistola) driver?.fijarPotencia(a.potencia)
         if (a.servidor != antes.servidor) desfaseReloj = null
         sucio = true

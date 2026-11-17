@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -148,7 +149,8 @@ fun ManualScreen(onCerrar: () -> Unit) {
         Navegacion.seccionManual = null
     }
 
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    Surface(color = MaterialTheme.colorScheme.background, contentColor = MaterialTheme.colorScheme.onBackground) {
+    Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onCerrar) { Text("← Volver") }
             Text("Manual", fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.weight(1f))
@@ -189,6 +191,7 @@ fun ManualScreen(onCerrar: () -> Unit) {
         }
     }
 }
+}
 
 private fun texto(b: Bloque): String = when (b) {
     is Bloque.Titulo -> b.texto
@@ -204,21 +207,21 @@ private fun texto(b: Bloque): String = when (b) {
 @Composable
 private fun Dibujar(b: Bloque) {
     when (b) {
-        is Bloque.Titulo -> Text(b.texto, fontSize = 26.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
+        is Bloque.Titulo -> Text(b.texto, fontSize = 26.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
         is Bloque.Seccion -> Text(b.texto, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Turquesa, modifier = Modifier.padding(top = 18.dp, bottom = 4.dp))
-        is Bloque.Sub -> Text(b.texto, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
-        is Bloque.Parrafo -> Text(enLinea(b.texto), fontSize = 15.sp, lineHeight = 21.sp)
+        is Bloque.Sub -> Text(b.texto, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
+        is Bloque.Parrafo -> Text(enLinea(b.texto), fontSize = 15.sp, lineHeight = 21.sp, color = MaterialTheme.colorScheme.onBackground)
         is Bloque.Vineta -> Row(Modifier.padding(vertical = 2.dp)) {
             Text(b.marca, color = Turquesa, modifier = Modifier.width(26.dp), fontWeight = FontWeight.Bold)
-            Text(enLinea(b.texto), fontSize = 15.sp, lineHeight = 21.sp)
+            Text(enLinea(b.texto), fontSize = 15.sp, lineHeight = 21.sp, color = MaterialTheme.colorScheme.onBackground)
         }
         is Bloque.Nota -> Text(
-            enLinea(b.texto), fontSize = 14.sp, lineHeight = 20.sp,
+            enLinea(b.texto), fontSize = 14.sp, lineHeight = 20.sp, color = MaterialTheme.colorScheme.onBackground,
             modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)
                 .background(Naranja.copy(alpha = 0.12f), RoundedCornerShape(10.dp)).padding(10.dp),
         )
         is Bloque.Codigo -> Text(
-            b.texto, fontFamily = FontFamily.Monospace, fontSize = 13.sp,
+            b.texto, fontFamily = FontFamily.Monospace, fontSize = 13.sp, color = MaterialTheme.colorScheme.onBackground,
             modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)
                 .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(10.dp)).padding(10.dp),
         )

@@ -236,6 +236,7 @@ object ServidorWeb {
         val (datos, mime, nombre) = when (tipo) {
             "csv" -> Triple(Exportador.pasadasCsv(e), Exportador.MIME_CSV, Exportador.nombreArchivo(e, "pasadas", "csv"))
             "xlsx" -> Triple(Exportador.pasadasXlsx(e), Exportador.MIME_XLSX, Exportador.nombreArchivo(e, "pasadas", "xlsx"))
+            "lcsv" -> Triple(Exportador.lecturasCsv(e), Exportador.MIME_CSV, Exportador.nombreArchivo(e, "lecturas", "csv"))
             "pcsv" -> Triple(Exportador.participantesCsv(e), Exportador.MIME_CSV, Exportador.nombreArchivo(e, "participantes", "csv"))
             "pxlsx" -> Triple(Exportador.participantesXlsx(e), Exportador.MIME_XLSX, Exportador.nombreArchivo(e, "participantes", "xlsx"))
             else -> {
@@ -297,7 +298,7 @@ button{font:inherit;padding:10px 16px;border:0;border-radius:9px;background:#00c
         val f = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
         val actual = Engine.ajustes.value.eventoId
         val eventos = Engine.db.eventosResumen()
-        val sb = StringBuilder("<p class=\"sub\">Eventos guardados en el teléfono. Archivos con el número de chip ya convertido.</p>")
+        val sb = StringBuilder("<p class=\"sub\">Eventos guardados en el teléfono. Archivos con el número de chip ya convertido. El Excel completo trae las hojas Pasadas y Lecturas (todas las marcaciones).</p>")
         if (eventos.isEmpty()) sb.append("<div class=\"card\">No hay eventos.</div>")
         for (r in eventos) {
             val e = r.evento
@@ -305,10 +306,11 @@ button{font:inherit;padding:10px 16px;border:0;border-radius:9px;background:#00c
             sb.append("<div class=\"card\"><b>${h(e.nombre)}</b>")
             if (e.id == actual) sb.append(" <span class=\"act\">ACTUAL</span>")
             sb.append("<div class=\"n\">${h(listOf(e.fecha, e.lugar, if (e.local) "Local" else "NexCrono").filter { it.isNotBlank() }.joinToString(" · "))}</div>")
-            sb.append("<div class=\"n\">${r.pasadas} pasadas · ${r.chips} chips · ${r.inscritos} participantes" +
+            sb.append("<div class=\"n\">${r.pasadas} pasadas · ${r.lecturas} lecturas · ${r.chips} chips · ${r.inscritos} participantes" +
                 (r.ultima?.let { " · última lectura ${f.format(Date(it))}" } ?: "") + "</div>")
-            sb.append("<a class=\"b\" href=\"/descargar?evento=$id&f=xlsx\">Pasadas Excel</a>")
+            sb.append("<a class=\"b\" href=\"/descargar?evento=$id&f=xlsx\">Excel completo</a>")
             sb.append("<a class=\"b s\" href=\"/descargar?evento=$id&f=csv\">Pasadas CSV</a>")
+            if (r.lecturas > 0) sb.append("<a class=\"b s\" href=\"/descargar?evento=$id&f=lcsv\">Todas las lecturas CSV</a>")
             if (r.inscritos > 0) {
                 sb.append("<a class=\"b\" href=\"/descargar?evento=$id&f=pxlsx\">Participantes Excel</a>")
                 sb.append("<a class=\"b s\" href=\"/descargar?evento=$id&f=pcsv\">Participantes CSV</a>")

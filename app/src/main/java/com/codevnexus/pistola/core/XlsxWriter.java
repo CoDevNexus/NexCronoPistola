@@ -15,9 +15,42 @@ public final class XlsxWriter {
 
     private XlsxWriter() {}
 
+    /** Una hoja del libro. */
+    public static final class Hoja {
+        public final String nombre;
+        public final String[] encabezados;
+        public final List<Object[]> filas;
+
+        public Hoja(String nombre, String[] encabezados, List<Object[]> filas) {
+            this.nombre = nombre;
+            this.encabezados = encabezados;
+            this.filas = filas;
+        }
+    }
+
     public static void write(OutputStream os, String sheetName, String[] headers, List<Object[]> rows)
             throws IOException {
+        java.util.List<Hoja> h = new java.util.ArrayList<>();
+        h.add(new Hoja(sheetName, headers, rows));
+        writeHojas(os, h);
+    }
+
+    /** Libro con varias hojas, en el orden dado. */
+    public static void writeHojas(OutputStream os, List<Hoja> hojas) throws IOException {
         ZipOutputStream zip = new ZipOutputStream(os);
+        int n = hojas.size();
+        StringBuilder overrides = new StringBuilder();
+        StringBuilder sheets = new StringBuilder();
+        StringBuilder rels = new StringBuilder();
+        for (int i = 1; i <= n; i++) {
+            overrides.append("<Override PartName=\"/xl/worksheets/sheet").append(i)
+                     .append(".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>");
+            sheets.append("<sheet name=\"").append(esc(nombreHoja(hojas.get(i - 1).nombre, i))).append("\" sheetId=\"").append(i)
+                  .append("\" r:id=\"rId").append(i).append("\"/>");
+            rels.append("<Relationship Id=\"rId").append(i)
+                .append("\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet")
+                .append(i).append(".xml\"/>");
+        }
 
         put(zip, "[Content_Types].xml",
                 "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
@@ -25,7 +58,7 @@ public final class XlsxWriter {
                 + "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
                 + "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
                 + "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>"
-                + "<Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
+                + overrides
                 + "<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>"
                 + "</Types>");
 
@@ -39,14 +72,14 @@ public final class XlsxWriter {
                 "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
                 + "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" "
                 + "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
-                + "<sheets><sheet name=\"" + esc(sheetName) + "\" sheetId=\"1\" r:id=\"rId1\"/></sheets>"
+                + "<sheets>" + sheets + "</sheets>"
                 + "</workbook>");
 
         put(zip, "xl/_rels/workbook.xml.rels",
                 "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
                 + "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
-                + "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>"
-                + "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>"
+                + rels
+                + "<Relationship Id=\"rId" + (n + 1) + "\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>"
                 + "</Relationships>");
 
         // Estilo 0 = normal, estilo 1 = negrita (encabezados)
@@ -64,6 +97,16 @@ public final class XlsxWriter {
                 + "<cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles>"
                 + "</styleSheet>");
 
+        for (int i = 0; i < n; i++) {
+            Hoja h = hojas.get(i);
+            put(zip, "xl/worksheets/sheet" + (i + 1) + ".xml", hojaXml(h.encabezados, h.filas));
+        }
+
+        zip.finish();
+        zip.flush();
+    }
+
+    private static String hojaXml(String[] headers, List<Object[]> rows) {
         StringBuilder sb = new StringBuilder(4096 + rows.size() * 300);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>")
           .append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">")
@@ -98,10 +141,14 @@ public final class XlsxWriter {
             r++;
         }
         sb.append("</sheetData></worksheet>");
-        put(zip, "xl/worksheets/sheet1.xml", sb.toString());
+        return sb.toString();
+    }
 
-        zip.finish();
-        zip.flush();
+    /** Excel exige nombres de hoja de hasta 31 caracteres, sin : \\ / ? * [ ] */
+    private static String nombreHoja(String s, int i) {
+        String t = s == null ? "" : s.replaceAll("[:\\\\/?*\\[\\]]", " ").trim();
+        if (t.isEmpty()) t = "Hoja" + i;
+        return t.length() > 31 ? t.substring(0, 31) : t;
     }
 
     private static void textCell(StringBuilder sb, String ref, String text, int style) {

@@ -60,6 +60,7 @@ data class EventoResumen(
     val inscritos: Int,
     val pendientes: Int,
     val ultima: Long?,
+    val lecturas: Int = 0,
 )
 
 /** Inscrito que ya pasó por el punto, con la hora de su primera pasada. */
@@ -337,3 +338,18 @@ data class Grabacion(
     val ok: Boolean? = null,
     val verificado: String? = null,
 )
+
+/** Cada vez que la pistola leyó un chip (antes de agruparlo en pasadas). */
+data class LecturaCruda(
+    val evento: String,
+    val pasada: String,
+    val epc: String,
+    val ts: Long,
+    val rssi: Int?,
+    val origen: String,      // vivo | memoria | manual | barras
+    val punto: String,
+    val dispositivo: String,
+)
+
+/** Lectura cruda con los datos del atleta, para exportar. */
+data class LecturaExportable(val l: LecturaCruda, val dorsal: String?, val nombre: String?, val modo: String?)

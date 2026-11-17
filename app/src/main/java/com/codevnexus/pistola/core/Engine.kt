@@ -20,6 +20,7 @@ import com.codevnexus.pistola.R
 import com.codevnexus.pistola.driver.ConfigPistola
 import com.codevnexus.pistola.driver.DriverListener
 import com.codevnexus.pistola.driver.LecturaMemoria
+import com.codevnexus.pistola.driver.ResumenSD
 import com.codevnexus.pistola.driver.Drivers
 import com.codevnexus.pistola.driver.RfidDriver
 import com.codevnexus.pistola.service.LectorService
@@ -64,6 +65,8 @@ object Engine {
     val actualizacion = MutableStateFlow<Actualizacion?>(null)
     /** Estado de la descarga de memoria/SD: null = sin actividad. */
     val memoria = MutableStateFlow<String?>(null)
+    /** Lecturas de la SD que no traían hora propia, pendientes de que el usuario decida importarlas. */
+    val memoriaAprox = MutableStateFlow<List<LecturaMemoria>>(emptyList())
     val grabacion = MutableStateFlow(Grabacion())
     @Volatile private var epcEnGrabacion: String? = null
 
@@ -88,6 +91,8 @@ object Engine {
     private var ultimoTextoNotif = ""
     private var tick = 0L
     private var tono: ToneGenerator? = null
+    /** Lecturas individuales pendientes de guardar (se escriben en lote cada medio segundo). */
+    private val bufferLecturas = ArrayList<LecturaCruda>()
 
     @Synchronized
     fun init(ctx: Context) {
@@ -113,6 +118,7 @@ object Engine {
         sched.scheduleWithFixedDelay({ seguro { cadaSegundo() } }, 1, 1, TimeUnit.SECONDS)
         sched.scheduleWithFixedDelay({ seguro { if (sucio) refrescar() } }, 0, 300, TimeUnit.MILLISECONDS)
         sched.scheduleWithFixedDelay({ seguro { Uploader.ciclo() } }, 3, 3, TimeUnit.SECONDS)
+        sched.scheduleWithFixedDelay({ seguro { guardarBufferLecturas() } }, 500, 500, TimeUnit.MILLISECONDS)
         iniciado = true
     }
 
@@ -236,6 +242,7 @@ object Engine {
 
     /** Borra un evento con sus pasadas e inscritos. Si era el actual, abre otro (o crea uno nuevo). */
     fun borrarEvento(id: String) {
+        guardarBufferLecturas()
         val eraActual = id == ajustes.value.eventoId
         synchronized(this) {
             if (eraActual) {
@@ -480,11 +487,82 @@ object Engine {
         }
     }
 
+    /** Resultado de leer la SD: guarda copia del LOG.TXT, importa lo que tiene hora y explica el resto. */
+    fun alLeerMemoria(lecturas: List<LecturaMemoria>, registro: String?, r: ResumenSD) {
+        val f = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+        val copia = registro?.let { guardarCopiaRegistro(it) }
+        val exactas = lecturas.filter { !it.aproximada }
+        val aprox = lecturas.filter { it.aproximada }
+        val sb = StringBuilder()
+        sb.append("Registro de la pistola: ${r.lineas} líneas, ${r.chipsLeidos} lecturas de chips.\n")
+        if (r.chipsLeidos == 0) {
+            sb.append(
+                "\nNo hay lecturas de chips en la memoria. Revisa:\n" +
+                    "• que la micro SD esté bien puesta (recomendado: 32 GB o menos, formato FAT32);\n" +
+                    "• que leíste con el gatillo DESPUÉS de desconectar la app;\n" +
+                    "• que no borraste la memoria antes de leerla."
+            )
+        } else {
+            if (r.conConexion > 0) sb.append("• ${r.conConexion} leídas con el teléfono conectado: ya estaban registradas en vivo.\n")
+            if (exactas.isNotEmpty()) sb.append("• ${exactas.size} leídas sin conexión, con hora: " + importarMemoria(exactas) + "\n")
+            if (r.sinHora > 0) {
+                sb.append(
+                    "• ${r.sinHora} leídas sin conexión pero SIN HORA propia: la pistola no tenía la configuración " +
+                        "grabada (AUTO.TXT) y al dormirse la perdió. Puedes importarlas con hora aproximada " +
+                        "(la última fecha anotada en el registro, por ejemplo al despertar).\n"
+                )
+            }
+            if (r.desde != null && r.hasta != null) {
+                sb.append("Lecturas entre ${f.format(java.util.Date(r.desde))} y ${f.format(java.util.Date(r.hasta))}.\n")
+                val ahora = System.currentTimeMillis()
+                if (r.hasta < ahora - 2 * 86_400_000L || r.desde > ahora + 86_400_000L) {
+                    sb.append(
+                        "⚠ La fecha de la pistola estaba mal en ese momento (¿se le acabó la batería?). " +
+                            "Las pasadas importadas quedan con esa fecha, al final de la lista. Al conectarla, la app ya " +
+                            "le corrigió el reloj para las próximas lecturas.\n"
+                    )
+                }
+            }
+            if (r.conHora == 0 && r.sinHora == 0 && r.conConexion > 0) {
+                sb.append("Todo lo de la memoria se leyó con el teléfono conectado: no hay nada nuevo que importar.\n")
+            }
+        }
+        if (copia != null) sb.append("\nCopia del registro guardada en Descargas/NexCrono/$copia")
+        memoriaAprox.value = aprox
+        memoria.value = sb.toString().trim()
+        db.anotar("memoria", "SD: ${r.chipsLeidos} lecturas, ${r.conHora} con hora, ${r.sinHora} sin hora, ${r.conConexion} en vivo")
+    }
+
+    /** Importa las lecturas de la SD que no traían hora, con la hora aproximada del registro. */
+    fun importarMemoriaAproximada(): String {
+        val l = memoriaAprox.value
+        memoriaAprox.value = emptyList()
+        if (l.isEmpty()) return "No hay lecturas pendientes"
+        val r = importarMemoria(l, "memoria_aprox")
+        db.anotar("memoria", "Importadas ${l.size} lecturas con hora aproximada")
+        return "$r\nQuedan marcadas como «memoria_aprox» (hora aproximada): revísalas antes de usarlas en resultados."
+    }
+
+    private fun guardarCopiaRegistro(texto: String): String? = try {
+        val nombre = "LOG_pistola_" + java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date()) + ".txt"
+        val cv = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, nombre)
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/NexCrono")
+        }
+        val uri = app.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)
+        uri?.let { u -> app.contentResolver.openOutputStream(u)?.use { it.write(texto.toByteArray(Charsets.UTF_8)) } }
+        if (uri != null) nombre else null
+    } catch (e: Exception) {
+        log("! No se pudo guardar la copia del registro: ${e.message}")
+        null
+    }
+
     /**
      * Convierte las lecturas guardadas en la pistola en pasadas (misma regla de ventana que en vivo)
      * y las agrega al evento actual. Un id determinístico evita duplicados si se importa dos veces.
      */
-    private fun importarMemoria(lecturas: List<LecturaMemoria>): String {
+    private fun importarMemoria(lecturas: List<LecturaMemoria>, origen: String = "memoria"): String {
         if (lecturas.isEmpty()) return "No había lecturas de chips en la memoria"
         val a = ajustes.value
         val ventana = a.ventanaSeg.coerceAtLeast(1) * 1000L
@@ -499,7 +577,7 @@ object Engine {
                     if (!fin) continue
                     val primera = tiempos[ini]
                     val ultima = tiempos[k]
-                    val id = UUID.nameUUIDFromBytes("mem|${a.dispositivoId}|$epc|$primera".toByteArray()).toString()
+                    val id = UUID.nameUUIDFromBytes("$origen|${a.dispositivoId}|$epc|$primera".toByteArray()).toString()
                     if (db.existe(id)) {
                         repetidas++
                     } else {
@@ -511,10 +589,13 @@ object Engine {
                             punto = a.nombrePunto, modo = a.modo, dispositivo = a.dispositivo,
                             primera = primera, ultima = ultima, mejorTs = primera, rssi = null,
                             lecturas = k - ini + 1, hora = primera, cerrada = true, enviado = false,
-                            origen = "memoria", sincronizado = desfaseReloj != null,
+                            origen = origen, sincronizado = desfaseReloj != null,
                         )
                         p.hora = horaSegunRegla(p)
                         db.guardar(p)
+                        db.guardarLecturas(tiempos.subList(ini, k + 1).map {
+                            LecturaCruda(p.evento, p.id, epc, it, null, origen, p.punto, p.dispositivo)
+                        })
                         nuevas++
                     }
                     ini = k + 1
@@ -550,8 +631,12 @@ object Engine {
         override fun onError(mensaje: String) { if (vigente()) Engine.onError(mensaje) }
         override fun onChipCercano(epc: String?, rssi: Int?) { if (vigente()) Engine.alLeerChipCercano(epc, rssi) }
         override fun onGrabacion(ok: Boolean, mensaje: String) { if (vigente()) Engine.alGrabar(ok, mensaje) }
-        override fun onMemoria(lecturas: List<LecturaMemoria>, mensaje: String) {
+        override fun onMemoria(lecturas: List<LecturaMemoria>, mensaje: String, registro: String?, resumen: ResumenSD?) {
             if (!vigente()) return
+            if (resumen != null) {
+                Engine.alLeerMemoria(lecturas, registro, resumen)
+                return
+            }
             Engine.memoria.value = if (lecturas.isEmpty()) mensaje else mensaje + "\n" + Engine.importarMemoria(lecturas)
         }
     }
@@ -603,6 +688,20 @@ object Engine {
 
     fun ahoraCorregido(): Long = System.currentTimeMillis() + (desfaseReloj ?: 0L)
 
+    private fun anotarLectura(p: Pasada, epc: String, ts: Long, rssi: Int?, origen: String) {
+        synchronized(bufferLecturas) {
+            bufferLecturas += LecturaCruda(p.evento, p.id, epc, ts, rssi, origen, p.punto, p.dispositivo)
+        }
+    }
+
+    fun guardarBufferLecturas() {
+        val lote = synchronized(bufferLecturas) {
+            if (bufferLecturas.isEmpty()) return
+            ArrayList(bufferLecturas).also { bufferLecturas.clear() }
+        }
+        db.guardarLecturas(lote)
+    }
+
     /** Modo demostración: sin licencia válida se limita la cantidad de pasadas por evento. */
     private fun licenciaPermite(): Boolean {
         if (Licencia.permiteCaptura(stats.value.pasadas)) return true
@@ -634,6 +733,7 @@ object Engine {
             }
             p.hora = horaSegunRegla(p)
             db.guardar(p)
+            anotarLectura(p, epc, t, rssi, "vivo")
         } else {
             if (p != null) cerrar(p)
             val chip = decodificar(epc)
@@ -647,6 +747,7 @@ object Engine {
             )
             abiertas[epc] = n
             db.guardar(n)
+            anotarLectura(n, epc, t, rssi, "vivo")
             val desconocido = i == null && inscritos.isNotEmpty()
             avisar(
                 if (desconocido) TipoAviso.DESCONOCIDO else TipoAviso.CONOCIDO,
@@ -679,6 +780,7 @@ object Engine {
             cerrada = true, enviado = false, origen = origen, sincronizado = desfaseReloj != null,
         )
         db.guardar(p)
+        anotarLectura(p, p.epc, t, null, origen)
         avisar(
             TipoAviso.MANUAL, dorsal,
             (if (origen == "barras") "Código de barras" else "Manual") +
@@ -715,6 +817,7 @@ object Engine {
     }
 
     fun borrarEventoActual() {
+        guardarBufferLecturas()
         synchronized(this) {
             val ev = ajustes.value.eventoId
             abiertas.values.filter { it.evento == ev }.map { it.epc }.forEach { abiertas.remove(it) }

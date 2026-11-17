@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -84,6 +86,7 @@ fun PistolaScreen() {
     var potencia by remember { mutableFloatStateOf((ajustes.potencia ?: 29).toFloat()) }
     var comandosIni by remember(ajustes.comandosConectar) { mutableStateOf(ajustes.comandosConectar) }
     val memoria by Engine.memoria.collectAsState()
+    val memoriaAprox by Engine.memoriaAprox.collectAsState()
     var confirmarBorrarMemoria by remember { mutableStateOf(false) }
     val grabacion by Engine.grabacion.collectAsState()
     var numeroChip by remember { mutableStateOf("1") }
@@ -147,8 +150,15 @@ fun PistolaScreen() {
             onDismissRequest = { if (!enCurso) Engine.memoria.value = null },
             title = { Text("Pistola") },
             text = {
-                Column {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
                     Text(texto)
+                    if (!enCurso && memoriaAprox.isNotEmpty()) {
+                        Button(
+                            onClick = { Engine.memoria.value = Engine.importarMemoriaAproximada() },
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Naranja),
+                        ) { Text("Importar ${memoriaAprox.size} con hora aproximada") }
+                    }
                     if (enCurso) {
                         Spacer(Modifier.height(12.dp))
                         LinearProgressIndicator(Modifier.fillMaxWidth())

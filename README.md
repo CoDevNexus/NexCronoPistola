@@ -2,7 +2,7 @@
 
 App Android (`com.codevnexus.pistola`) para capturar los chips de los competidores con pistolas RFID UHF en **salidas controladas** y **puntos de control**, y enviar cada pasada a **NexCrono**.
 
-**Versión 1.4.0** · NexCrono · CodevNexus · codevnexus.tech
+**Versión 1.4.2** · NexCrono · CodevNexus · codevnexus.tech
 
 El uso completo está en el **manual**: `docs/MANUAL.md`, que también se ve dentro de la app con el botón **i**.
 
@@ -36,7 +36,8 @@ El uso completo está en el **manual**: `docs/MANUAL.md`, que también se ve den
 - Historial con crear, abrir, editar, borrar y compartir.
 - Participantes desde **Excel o CSV**, en eventos locales, o desde NexCrono.
 - Indicadores de **detectados / no detectados / no inscritos**, con sus listas.
-- Archivos de **pasadas** y de **participantes con su estado**, en Excel o CSV.
+- **Cada lectura de la pistola queda guardada** (marcaciones masivas), no solo las pasadas.
+- Archivos de **pasadas**, **todas las lecturas** y **participantes con su estado**, en Excel o CSV. El Excel trae las hojas *Pasadas* y *Lecturas*.
 - **Compartir por WiFi:** servidor web en el teléfono con PIN, para descargar desde un navegador de la misma red o del hotspot.
 
 **Pistola TSL** (protocolo *TSL ASCII 2.5*)
@@ -120,6 +121,8 @@ Se recomienda el firmware **5.1.2** del 1128, que se instala desde Windows con *
 
 ## Historial de versiones
 
+- **1.4.2:** lectura de la memoria SD con resumen, copia del LOG.TXT, importación de lecturas sin hora con hora aproximada (`memoria_aprox`) y aviso de fecha incorrecta en la pistola.
+- **1.4.1:** se guarda cada lectura de la pistola y se exporta en la hoja *Lecturas* y en su propio CSV; el manual se ve correctamente dentro de la app.
 - **1.4.0:** eventos en SQLite con historial y CRUD; participantes desde Excel/CSV con indicadores y listas; compartir por WiFi con PIN; estados de sincronización y bitácora; licencia .lic; manual dentro de la app; número de chip convertido en todas las salidas.
 - **1.3.x:** número de chip por segmento del EPC (TimingSense) y detección automática; grabado de chips en el mismo formato; AUTO.TXT; lectura de la memoria SD corregida.
 - **1.2.0:** configuración de la pistola según *TSL ASCII Protocol 2.5* (gatillo, reloj, sesión S0) y memoria SD.

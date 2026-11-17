@@ -29,7 +29,7 @@ object Exportador {
 
     /** Número de chip convertido con la configuración actual (las pasadas manuales guardan el suyo). */
     fun chipConvertido(p: Pasada): String =
-        if (p.epc.isNotBlank() && (p.origen == "vivo" || p.origen == "memoria")) Engine.decodificar(p.epc) else p.chip
+        if (p.epc.isNotBlank() && (p.origen == "vivo" || p.origen.startsWith("memoria"))) Engine.decodificar(p.epc) else p.chip
 
     private fun fmt() = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
 
@@ -42,6 +42,33 @@ object Exportador {
                 f.format(Date(p.hora)), f.format(Date(p.primera)), f.format(Date(p.ultima)),
                 p.rssi, p.lecturas, p.punto, p.modo, p.dispositivo, p.origen,
                 if (p.sincronizado) "SI" else "NO", if (p.enviado) "SI" else "NO", evento.nombre, p.id,
+            )
+        }
+    }
+
+    /**
+     * Todas las lecturas (marcaciones masivas): una fila por cada vez que la pistola leyó un chip.
+     * Pensada para cargar a mano en NexCrono si hiciera falta: fecha y hora separadas, número ya convertido.
+     */
+    private val encabezadosLecturas = arrayOf(
+        "Fecha", "Hora", "Número", "Dorsal", "Nombre", "Número de chip", "EPC", "RSSI (dBm)",
+        "Punto", "Modo", "Origen", "Dispositivo", "Marca de tiempo (ms)", "ID pasada",
+    )
+
+    private fun filasLecturas(evento: Evento): List<Array<Any?>> {
+        Engine.guardarBufferLecturas()
+        val fd = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val fh = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+        val cache = HashMap<String, String>()
+        return Engine.db.lecturasExportables(evento.id).map { x ->
+            val l = x.l
+            val chip = if (l.epc.isNotBlank() && (l.origen == "vivo" || l.origen.startsWith("memoria"))) {
+                cache.getOrPut(l.epc) { Engine.decodificar(l.epc) }
+            } else x.dorsal ?: ""
+            val d = Date(l.ts)
+            arrayOf<Any?>(
+                fd.format(d), fh.format(d), x.dorsal ?: chip, x.dorsal ?: "", x.nombre ?: "", chip, l.epc, l.rssi,
+                l.punto, x.modo ?: "", l.origen, l.dispositivo, l.ts, l.pasada,
             )
         }
     }
@@ -96,7 +123,18 @@ object Exportador {
     // ───────────── Contenido en memoria (servidor WiFi y archivos) ─────────────
 
     fun pasadasCsv(e: Evento) = csv(encabezados, filasPasadas(e))
-    fun pasadasXlsx(e: Evento) = xlsx("Pasadas", encabezados, filasPasadas(e))
+    fun lecturasCsv(e: Evento) = csv(encabezadosLecturas, filasLecturas(e))
+
+    /** Excel del evento: hoja «Pasadas» y hoja «Lecturas» con todas las marcaciones. */
+    fun pasadasXlsx(e: Evento): ByteArray {
+        Engine.guardarBufferLecturas()
+        val out = ByteArrayOutputStream()
+        val hojas = java.util.ArrayList<XlsxWriter.Hoja>()
+        hojas.add(XlsxWriter.Hoja("Pasadas", encabezados, filasPasadas(e)))
+        hojas.add(XlsxWriter.Hoja("Lecturas", encabezadosLecturas, filasLecturas(e)))
+        XlsxWriter.writeHojas(out, hojas)
+        return out.toByteArray()
+    }
     fun participantesCsv(e: Evento) = csv(encabezadosParticipantes, filasParticipantes(e))
     fun participantesXlsx(e: Evento) = xlsx("Participantes", encabezadosParticipantes, filasParticipantes(e))
 
@@ -110,21 +148,31 @@ object Exportador {
     /** Evento actual. @return Uri del archivo creado en Descargas/NexCrono */
     fun exportar(ctx: Context, excel: Boolean): Uri {
         val e = Engine.eventoActual() ?: throw IOException("No hay evento actual")
-        return exportarEvento(ctx, e, excel, participantes = false)
+        return exportarEvento(ctx, e, excel, TIPO_PASADAS)
     }
 
-    fun exportarEvento(ctx: Context, e: Evento, excel: Boolean, participantes: Boolean): Uri {
-        val datos = when {
-            participantes && excel -> participantesXlsx(e)
-            participantes -> participantesCsv(e)
-            excel -> pasadasXlsx(e)
-            else -> pasadasCsv(e)
+    const val TIPO_PASADAS = "pasadas"
+    const val TIPO_LECTURAS = "lecturas"
+    const val TIPO_PARTICIPANTES = "participantes"
+
+    /** @param tipo TIPO_PASADAS (el Excel incluye la hoja Lecturas), TIPO_LECTURAS o TIPO_PARTICIPANTES */
+    fun exportarEvento(ctx: Context, e: Evento, excel: Boolean, tipo: String): Uri {
+        when (tipo) {
+            TIPO_PARTICIPANTES -> if (Engine.db.inscritos(e.id).isEmpty() && Engine.db.noInscritos(e.id).isEmpty()) {
+                throw IOException("El evento no tiene participantes cargados")
+            }
+            TIPO_LECTURAS -> {
+                Engine.guardarBufferLecturas()
+                if (Engine.db.contarLecturas(e.id) == 0) throw IOException("El evento no tiene lecturas guardadas")
+            }
+            else -> if (Engine.db.estadisticas(e.id).pasadas == 0) throw IOException("El evento no tiene pasadas")
         }
-        if (!participantes && Engine.db.estadisticas(e.id).pasadas == 0) throw IOException("El evento no tiene pasadas")
-        if (participantes && Engine.db.inscritos(e.id).isEmpty() && Engine.db.noInscritos(e.id).isEmpty()) {
-            throw IOException("El evento no tiene participantes cargados")
+        val datos = when (tipo) {
+            TIPO_PARTICIPANTES -> if (excel) participantesXlsx(e) else participantesCsv(e)
+            TIPO_LECTURAS -> if (excel) xlsx("Lecturas", encabezadosLecturas, filasLecturas(e)) else lecturasCsv(e)
+            else -> if (excel) pasadasXlsx(e) else pasadasCsv(e)
         }
-        val nombre = nombreArchivo(e, if (participantes) "participantes" else "pasadas", if (excel) "xlsx" else "csv")
+        val nombre = nombreArchivo(e, tipo, if (excel) "xlsx" else "csv")
         val cv = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, nombre)
             put(MediaStore.MediaColumns.MIME_TYPE, if (excel) MIME_XLSX else MIME_CSV)

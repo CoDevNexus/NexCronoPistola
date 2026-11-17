@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material.icons.Icons
@@ -59,7 +60,11 @@ private val Esquema = darkColorScheme(
 
 @Composable
 fun PistolaTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = Esquema, content = content)
+    MaterialTheme(colorScheme = Esquema) {
+        // Superficie raíz: fija el color del texto claro sobre fondo oscuro en TODAS las pantallas
+        // (sin esto, una pantalla fuera del Scaffold, como el manual, dibuja el texto en negro).
+        Surface(color = Esquema.background, contentColor = Esquema.onBackground) { content() }
+    }
 }
 
 @Composable

@@ -98,12 +98,17 @@ Todos los eventos quedan guardados en el teléfono (base de datos SQLite), con s
 
 - **+ Nuevo evento:** nombre, fecha, lugar y notas. **Crear y abrir** lo deja como evento actual; **Solo crear** lo guarda para después.
 - **De NexCrono** (con el teléfono vinculado): lista los eventos de NexCrono. Al elegir uno, se abre y se descargan sus inscritos.
-- Cada evento muestra pasadas, chips, participantes, pasadas por enviar y la hora de la última lectura.
+- Cada evento muestra pasadas, lecturas, chips, participantes, pasadas por enviar y la hora de la última lectura.
 - **Abrir:** lo deja como evento actual. Lo que se lea desde ese momento queda en ese evento.
 - **Editar:** cambia el nombre, la fecha, el lugar o las notas.
 - **Compartir:** crea el archivo y lo envía por WhatsApp, correo, Drive, etc.:
-  - **Pasadas** (Excel o CSV): cada pasada con el número, dorsal, nombre, **número de chip ya convertido**, EPC, horas, señal, punto, origen y si se envió.
+  - **Excel completo:** dos hojas.
+    - **Pasadas:** una fila por pasada, con número, dorsal, nombre, **número de chip ya convertido**, EPC, horas, señal, punto, origen y si se envió.
+    - **Lecturas:** **cada vez que la pistola leyó un chip** (marcaciones masivas), con fecha, hora con milisegundos, número, dorsal, nombre, número de chip, EPC, señal, punto, modo, origen y equipo.
+  - **Pasadas · CSV** y **Todas las lecturas · CSV:** lo mismo, en archivos separados.
   - **Participantes y estado** (Excel o CSV): cada participante como `DETECTADO` (con su hora) o `NO DETECTADO`, más los chips `NO INSCRITO`.
+
+> La hoja **Lecturas** sirve para **cargar a mano en NexCrono** si algo falló en el envío, o para revisar una llegada dudosa. Incluye todas las lecturas: en vivo, de la memoria de la pistola, manuales y por código de barras.
 - **Eliminar:** borra el evento con sus pasadas y participantes. Exporta antes si lo necesitas: lo que no se envió se pierde.
 
 Los archivos también quedan en **Descargas/NexCrono**.
@@ -116,7 +121,7 @@ Para pasar los archivos a una computadora o a otro teléfono **sin cables y sin 
 2. En **Eventos**, activa **Compartir por WiFi**.
 3. En el navegador de la computadora abre la **dirección** que aparece, por ejemplo `http://192.168.1.25:8080`.
 4. Escribe el **PIN** de 6 dígitos que muestra la app.
-5. Descarga las pasadas o los participantes de cualquier evento, en Excel o CSV.
+5. Descarga de cualquier evento el Excel completo (pasadas y lecturas), las pasadas, todas las lecturas o los participantes.
 
 Seguridad del servidor:
 - El PIN cambia cada vez que se enciende.
@@ -148,15 +153,27 @@ Al conectar, la app deja la pistola configurada:
 
 ### Memoria / micro SD
 
-Lo que se lee con el gatillo **sin el teléfono** queda guardado en la tarjeta micro SD de la pistola.
+Lo que se lee con el gatillo **sin el teléfono** queda guardado en la tarjeta micro SD de la pistola (archivo `LOG.TXT`).
 
+**Antes del evento (una vez por pistola):** con la pistola conectada, toca **Grabar configuración en la pistola (AUTO.TXT)**. Sin esto, la pistola olvida su configuración al dormirse (al minuto sin conexión) y las lecturas siguientes quedan **sin hora**.
+
+**Para descargar:**
 1. Vuelve a conectar la pistola.
 2. Abre en la app el evento al que pertenecen esas lecturas.
-3. Toca **Leer memoria / SD**.
+3. Toca **Leer memoria / SD** y espera, porque puede tardar.
 
-La app importa solo lo leído **sin conexión** (lo leído con el teléfono conectado ya está registrado) y lo agrupa en pasadas con la misma ventana. Las pasadas importadas quedan con origen `memoria` y tienen precisión de **1 segundo**. Si se importa dos veces, no se duplica nada. Si aparecen «lecturas sin hora», la pistola no tenía el AUTO.TXT grabado.
+La app muestra un **resumen** de lo que trae la memoria:
+- **Leídas con el teléfono conectado:** se omiten, porque ya están registradas en vivo.
+- **Leídas sin conexión, con hora:** se importan solas como pasadas con origen `memoria`, con precisión de 1 segundo.
+- **Leídas sin conexión, sin hora** (la pistola no tenía AUTO.TXT): aparece el botón **Importar N con hora aproximada**. Usa la última fecha anotada en el registro (por ejemplo, cuando la pistola despertó) y las marca como `memoria_aprox`. Revísalas antes de usarlas en resultados.
+- El **rango de fechas** de las lecturas, y un aviso si la fecha de la pistola estaba mal (por ejemplo, el año 2000 por batería agotada).
 
-**Borrar memoria de la pistola** limpia el registro de la SD. Hazlo solo después de importar y enviar.
+Además:
+- Si se importa dos veces, no se duplica nada.
+- La app guarda siempre una **copia del registro** en `Descargas/NexCrono/LOG_pistola_….txt`. Envíala a soporte si algo no cuadra.
+- **Borrar memoria de la pistola** limpia el registro de la SD. Hazlo solo después de importar y enviar.
+
+> Si el resumen dice «No hay lecturas de chips en la memoria»: revisa que la micro SD esté bien puesta (se recomienda de 32 GB o menos, en formato FAT32), que leíste con el gatillo **después** de desconectar la app, y que no borraste la memoria antes.
 
 ### Grabar número en chips
 
@@ -282,7 +299,7 @@ Cada lectura que envía la app lleva:
 - `chip` **ya convertido** y `epc`;
 - punto y modo;
 - `horaMs`, `primeraMs` y `ultimaMs`;
-- RSSI, cantidad de lecturas y origen (`vivo`, `manual`, `barras` o `memoria`);
+- RSSI, cantidad de lecturas y origen (`vivo`, `manual`, `barras`, `memoria` o `memoria_aprox`);
 - si la hora estaba sincronizada.
 
 ## Solución de problemas
@@ -291,7 +308,7 @@ Cada lectura que envía la app lleva:
 - **Se desconecta con la pantalla bloqueada:** en Lectura toca **Permitir**, para quitar la restricción de batería.
 - **El número no coincide con el impreso:** Ajustes → Número de chip → **Detectar con un chip**.
 - **Lee chips de otros corrales:** baja la **potencia**.
-- **La memoria no trae hora:** graba el **AUTO.TXT** (Pistola → Configuración de la pistola).
+- **La memoria no trae lecturas o no trae hora:** lee el resumen que muestra la app. Graba el **AUTO.TXT** (Pistola → Configuración de la pistola) antes de usar la pistola sola, e importa las lecturas sin hora con **hora aproximada** si hace falta.
 - **NexCrono sin enlace:** revisa que estén en la misma red y la dirección, y mira el **Historial** en Ajustes. Las pasadas no se pierden: se envían cuando vuelve la conexión.
 - **El navegador no abre la dirección del WiFi:** que estén en la misma red y que el servidor siga encendido. Algunas redes de hoteles o eventos aíslan a los equipos entre sí; en ese caso usa el hotspot del teléfono.
 - **Modo demostración:** carga la licencia en Ajustes → Licencia.
@@ -302,7 +319,8 @@ Cada lectura que envía la app lleva:
 - **EPC:** código único grabado en el chip, en hexadecimal.
 - **Número de chip:** el número que se obtiene del EPC según la configuración (en TimingSense, el impreso).
 - **Dorsal:** número del atleta en la lista de participantes.
-- **Pasada:** el paso de un chip por el punto, desde la primera hasta la última lectura.
+- **Lectura (marcación):** cada vez que la pistola detecta un chip. Mientras el chip está cerca, la pistola puede leerlo decenas de veces por segundo.
+- **Pasada:** el paso de un chip por el punto, desde la primera hasta la última lectura. Agrupa todas esas lecturas.
 - **Ventana:** segundos sin leer un chip para dar su pasada por cerrada.
 - **RSSI:** intensidad de la señal en dBm. Cuanto más cerca de 0, más cerca está el chip.
 - **AUTO.TXT / LOG.TXT:** archivos de configuración y de registro en la micro SD de la pistola.

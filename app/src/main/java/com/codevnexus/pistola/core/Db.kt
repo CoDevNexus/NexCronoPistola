@@ -7,7 +7,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
 /** Todo queda guardado en el teléfono: si la app se cierra o no hay red, no se pierde nada. */
-class Db(ctx: Context) : SQLiteOpenHelper(ctx, "pistola.db", null, 3) {
+class Db(ctx: Context) : SQLiteOpenHelper(ctx, "pistola.db", null, 4) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -25,6 +25,17 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "pistola.db", null, 3) {
         db.execSQL("CREATE TABLE mapa(epc TEXT PRIMARY KEY, chip TEXT NOT NULL)")
         crearV2(db)
         crearV3(db, nueva = true)
+        crearV4(db)
+    }
+
+    /** v4: cada lectura individual de la pistola (marcaciones masivas). */
+    private fun crearV4(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS lecturas(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, evento TEXT NOT NULL, pasada TEXT, epc TEXT,
+                ts INTEGER NOT NULL, rssi INTEGER, origen TEXT, punto TEXT, dispositivo TEXT)"""
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS ix_lect_evento ON lecturas(evento, ts)")
     }
 
     /** v3: datos del evento, estado de sincronización de cada pasada, bitácora y estados guardados. */
@@ -68,6 +79,7 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "pistola.db", null, 3) {
             db.execSQL("INSERT OR IGNORE INTO eventos(id, nombre, fecha, local) VALUES('anterior', 'Lecturas versión 1.0', '', 1)")
         }
         if (oldVersion < 3) crearV3(db, nueva = true)
+        if (oldVersion < 4) crearV4(db)
     }
 
     // ───────────── Pasadas ─────────────
@@ -136,7 +148,7 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "pistola.db", null, 3) {
     fun reasignar(evento: String, chipDe: (String) -> String, inscritoDe: (epc: String, chip: String) -> Inscrito?) {
         val db = writableDatabase
         val filas = ArrayList<Pair<String, String>>()   // id, epc
-        db.rawQuery("SELECT id, epc FROM pasadas WHERE evento = ? AND origen = 'vivo'", arrayOf(evento)).use { c ->
+        db.rawQuery("SELECT id, epc FROM pasadas WHERE evento = ? AND (origen = 'vivo' OR origen LIKE 'memoria%')", arrayOf(evento)).use { c ->
             while (c.moveToNext()) filas.add(c.getString(0) to c.getString(1))
         }
         db.beginTransaction()
@@ -157,6 +169,58 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "pistola.db", null, 3) {
 
     fun borrarEvento(evento: String) {
         writableDatabase.execSQL("DELETE FROM pasadas WHERE evento = ?", arrayOf(evento))
+        writableDatabase.execSQL("DELETE FROM lecturas WHERE evento = ?", arrayOf(evento))
+    }
+
+    // ───────────── Lecturas individuales ─────────────
+
+    /** Guarda un lote en una sola transacción (rápido aunque lleguen cientos por segundo). */
+    fun guardarLecturas(lote: List<LecturaCruda>) {
+        if (lote.isEmpty()) return
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val st = db.compileStatement(
+                "INSERT INTO lecturas(evento, pasada, epc, ts, rssi, origen, punto, dispositivo) VALUES(?,?,?,?,?,?,?,?)"
+            )
+            for (l in lote) {
+                st.clearBindings()
+                st.bindString(1, l.evento); st.bindString(2, l.pasada); st.bindString(3, l.epc)
+                st.bindLong(4, l.ts)
+                if (l.rssi != null) st.bindLong(5, l.rssi.toLong()) else st.bindNull(5)
+                st.bindString(6, l.origen); st.bindString(7, l.punto); st.bindString(8, l.dispositivo)
+                st.executeInsert()
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun contarLecturas(evento: String): Int =
+        android.database.DatabaseUtils.queryNumEntries(readableDatabase, "lecturas", "evento = ?", arrayOf(evento)).toInt()
+
+    /** Todas las lecturas del evento en orden de hora, con dorsal y nombre de su pasada. */
+    fun lecturasExportables(evento: String): List<LecturaExportable> {
+        val l = ArrayList<LecturaExportable>()
+        readableDatabase.rawQuery(
+            "SELECT l.evento, l.pasada, l.epc, l.ts, l.rssi, l.origen, l.punto, l.dispositivo, p.dorsal, p.nombre, p.modo " +
+                "FROM lecturas l LEFT JOIN pasadas p ON p.id = l.pasada WHERE l.evento = ? ORDER BY l.ts, l.id",
+            arrayOf(evento)
+        ).use { c ->
+            while (c.moveToNext()) {
+                l.add(
+                    LecturaExportable(
+                        LecturaCruda(
+                            c.getString(0), c.getString(1) ?: "", c.getString(2) ?: "", c.getLong(3),
+                            if (c.isNull(4)) null else c.getInt(4), c.getString(5) ?: "", c.getString(6) ?: "", c.getString(7) ?: "",
+                        ),
+                        c.getString(8), c.getString(9), c.getString(10),
+                    )
+                )
+            }
+        }
+        return l
     }
 
     // ───────────── Inscritos y eventos ─────────────
@@ -223,7 +287,8 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "pistola.db", null, 3) {
                 "(SELECT COUNT(DISTINCT chip) FROM pasadas p WHERE p.evento = e.id), " +
                 "(SELECT COUNT(*) FROM inscritos i WHERE i.evento = e.id), " +
                 "(SELECT COUNT(*) FROM pasadas p WHERE p.evento = e.id AND p.cerrada = 1 AND p.enviado = 0), " +
-                "(SELECT MAX(primera) FROM pasadas p WHERE p.evento = e.id), e.creado " +
+                "(SELECT MAX(primera) FROM pasadas p WHERE p.evento = e.id), e.creado, " +
+                "(SELECT COUNT(*) FROM lecturas l WHERE l.evento = e.id) " +
                 "FROM eventos e $filtro ORDER BY COALESCE((SELECT MAX(primera) FROM pasadas p WHERE p.evento = e.id), e.creado, 0) DESC",
             args
         ).use { c ->
@@ -236,6 +301,7 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "pistola.db", null, 3) {
                         ),
                         pasadas = c.getInt(6), chips = c.getInt(7), inscritos = c.getInt(8), pendientes = c.getInt(9),
                         ultima = if (c.isNull(10)) null else c.getLong(10),
+                        lecturas = c.getInt(12),
                     )
                 )
             }
@@ -250,6 +316,7 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "pistola.db", null, 3) {
         try {
             db.execSQL("DELETE FROM pasadas WHERE evento = ?", arrayOf(id))
             db.execSQL("DELETE FROM inscritos WHERE evento = ?", arrayOf(id))
+            db.execSQL("DELETE FROM lecturas WHERE evento = ?", arrayOf(id))
             db.execSQL("DELETE FROM eventos WHERE id = ?", arrayOf(id))
             db.execSQL("DELETE FROM sync_estado WHERE clave LIKE ?", arrayOf("%:$id"))
             db.setTransactionSuccessful()

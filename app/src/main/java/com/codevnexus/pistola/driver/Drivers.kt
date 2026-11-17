@@ -22,15 +22,30 @@ interface DriverListener {
     fun onInfo(clave: String, valor: String)
     fun onLinea(linea: String, saliente: Boolean)
     fun onError(mensaje: String)
-    /** Lecturas descargadas de la memoria/SD de la pistola (EPC + hora del reloj de la pistola). */
-    fun onMemoria(lecturas: List<LecturaMemoria>, mensaje: String)
+    /**
+     * Lecturas descargadas de la memoria/SD de la pistola (EPC + hora del reloj de la pistola).
+     * [registro] es el texto completo de LOG.TXT (null si no se leyó), [resumen] lo que se encontró.
+     */
+    fun onMemoria(lecturas: List<LecturaMemoria>, mensaje: String, registro: String? = null, resumen: ResumenSD? = null)
     /** Resultado de «leer chip más cercano» (null = no hay chip a la vista). */
     fun onChipCercano(epc: String?, rssi: Int?)
     /** Resultado de grabar un EPC. */
     fun onGrabacion(ok: Boolean, mensaje: String)
 }
 
-data class LecturaMemoria(val epc: String, val ts: Long)
+/** [aproximada] = la lectura no traía su propia hora; se usó la última fecha anterior del registro. */
+data class LecturaMemoria(val epc: String, val ts: Long, val aproximada: Boolean = false)
+
+/** Qué traía el registro de la SD. */
+data class ResumenSD(
+    val lineas: Int,
+    val chipsLeidos: Int,       // líneas EP: en total
+    val conConexion: Int,       // leídas con el teléfono conectado (ya registradas en vivo)
+    val conHora: Int,
+    val sinHora: Int,
+    val desde: Long?,
+    val hasta: Long?,
+)
 
 /** Configuración que la app aplica a la pistola cada vez que se conecta. */
 data class ConfigPistola(

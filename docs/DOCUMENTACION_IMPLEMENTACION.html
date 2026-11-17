@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexCrono Pistola · Documentación de implementación</title>
+<style>
+  :root {
+    --tq: #00897b; --tq-claro: #e0f2f1; --nar: #e65100; --nar-claro: #fff3e0;
+    --rojo: #c62828; --rojo-claro: #ffebee; --texto: #1c2529; --suave: #5b6b71;
+    --linea: #dde4e6; --fondo: #f7f9fa; --codigo: #0f1a1e;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--texto); background: #fff; }
+  .lado { position: fixed; top: 0; left: 0; bottom: 0; width: 280px; overflow-y: auto; background: var(--fondo);
+          border-right: 1px solid var(--linea); padding: 24px 18px; }
+  .lado .marca { font-weight: 800; font-size: 18px; margin-bottom: 2px; }
+  .lado .marca b { color: var(--tq); }
+  .lado .sub { color: var(--suave); font-size: 12px; margin-bottom: 18px; }
+  .lado a { display: block; color: var(--texto); text-decoration: none; font-size: 14px; padding: 5px 8px; border-radius: 6px; }
+  .lado a:hover { background: var(--tq-claro); color: var(--tq); }
+  .lado a.n2 { padding-left: 22px; font-size: 13px; color: var(--suave); }
+  main { margin-left: 280px; max-width: 920px; padding: 40px 48px 80px; }
+  h1 { font-size: 34px; line-height: 1.2; margin: 0 0 6px; }
+  h1 b { color: var(--tq); }
+  .portada { color: var(--suave); margin-bottom: 30px; }
+  h2 { font-size: 26px; margin: 56px 0 10px; padding-top: 14px; border-top: 3px solid var(--tq); }
+  h2 .num { color: var(--tq); margin-right: 6px; }
+  h3 { font-size: 19px; margin: 30px 0 8px; }
+  h4 { font-size: 16px; margin: 20px 0 6px; }
+  p { margin: 8px 0 12px; }
+  code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 0.9em; background: #eef2f3;
+         padding: 1px 6px; border-radius: 4px; color: #ad1457; }
+  pre { background: var(--codigo); color: #e6eef0; padding: 14px 16px; border-radius: 10px; overflow-x: auto;
+        font-size: 13.5px; line-height: 1.5; }
+  pre code { background: none; color: inherit; padding: 0; font-size: inherit; }
+  .etiqueta { font-size: 11px; font-weight: 700; letter-spacing: .05em; color: var(--suave); text-transform: uppercase; margin: 14px 0 -6px; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; font-size: 14.5px; }
+  th { text-align: left; background: var(--fondo); font-weight: 600; }
+  th, td { border: 1px solid var(--linea); padding: 8px 10px; vertical-align: top; }
+  .caja { border-radius: 10px; padding: 12px 16px; margin: 14px 0; border-left: 5px solid; }
+  .caja.info { background: var(--tq-claro); border-color: var(--tq); }
+  .caja.aviso { background: var(--nar-claro); border-color: var(--nar); }
+  .caja.peligro { background: var(--rojo-claro); border-color: var(--rojo); }
+  .caja b:first-child { display: block; margin-bottom: 2px; }
+  ol.pasos { counter-reset: paso; list-style: none; padding-left: 0; }
+  ol.pasos > li { counter-increment: paso; position: relative; padding: 4px 0 10px 44px; }
+  ol.pasos > li::before { content: counter(paso); position: absolute; left: 0; top: 2px; width: 30px; height: 30px; border-radius: 50%;
+                          background: var(--tq); color: #fff; font-weight: 700; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+  .arq { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 18px 0; }
+  .nodo { border: 2px solid var(--linea); border-radius: 12px; padding: 12px 14px; background: #fff; }
+  .nodo h5 { margin: 0 0 4px; font-size: 15px; }
+  .nodo p { margin: 0; font-size: 13.5px; color: var(--suave); }
+  .nodo.tel { border-color: var(--tq); } .nodo.nx { border-color: var(--nar); } .nodo.host { border-color: #5e35b1; }
+  .flecha { grid-column: 1 / -1; text-align: center; color: var(--suave); font-size: 13.5px; }
+  .check li { list-style: none; margin-left: -20px; }
+  .check li::before { content: "☐ "; color: var(--tq); font-weight: 700; }
+  footer { margin-top: 60px; padding-top: 16px; border-top: 1px solid var(--linea); color: var(--suave); font-size: 13px; }
+  @media (max-width: 900px) {
+    .lado { position: static; width: auto; border-right: 0; border-bottom: 1px solid var(--linea); }
+    main { margin-left: 0; padding: 24px 18px 60px; }
+    .arq { grid-template-columns: 1fr; }
+  }
+  @media print {
+    .lado { display: none; }
+    main { margin: 0; max-width: none; padding: 0 10mm; }
+    h2 { page-break-before: always; }
+    pre { white-space: pre-wrap; background: #f3f5f6; color: #000; border: 1px solid #ccc; }
+    a { color: inherit; text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="lado">
+  <div class="marca">NexCrono <b>Pistola</b></div>
+  <div class="sub">Documentación de implementación · v1.4.1</div>
+  <a href="#vision">1. Visión general</a>
+  <a href="#requisitos">2. Requisitos</a>
+  <a href="#compilar">3. Compilar y firmar el APK</a>
+  <a class="n2" href="#llave">Llave de firma</a>
+  <a class="n2" href="#secretos">Secretos de GitHub</a>
+  <a href="#licencias">4. Licencias</a>
+  <a class="n2" href="#lic-llaves">Crear las llaves</a>
+  <a class="n2" href="#lic-emitir">Emitir una licencia</a>
+  <a class="n2" href="#lic-formato">Formato y seguridad</a>
+  <a href="#actualizaciones">5. Servidor de actualizaciones</a>
+  <a class="n2" href="#act-instalar">Instalar en el hosting</a>
+  <a class="n2" href="#act-publicar">Publicar una versión</a>
+  <a class="n2" href="#act-api">API y protecciones</a>
+  <a href="#nexcrono">6. Integración con NexCrono</a>
+  <a class="n2" href="#nx-vincular">Vinculación por QR</a>
+  <a class="n2" href="#nx-api">API /api/pistola</a>
+  <a class="n2" href="#nx-reglas">Reglas de cronometraje</a>
+  <a class="n2" href="#nx-seguridad">Seguridad</a>
+  <a href="#wifi">7. Servidor WiFi del teléfono</a>
+  <a href="#archivos">8. Archivos exportables</a>
+  <a href="#puesta">9. Lista de puesta en marcha</a>
+  <a href="#problemas">10. Solución de problemas</a>
+</nav>
+
+<main>
+<h1>NexCrono <b>Pistola</b></h1>
+<p class="portada">Documentación de implementación del servidor de actualizaciones, las licencias, la firma del APK y la integración con NexCrono.<br>
+CodevNexus · codevnexus.tech · Versión de la app 1.4.1</p>
+
+<div class="caja info"><b>Para quién es este documento</b>
+Para quien instala y mantiene el sistema: CodevNexus o el cronometrista técnico. El uso diario de la app está en el <b>Manual</b> (<code>docs/MANUAL.md</code>, botón <b>i</b> dentro de la app).</div>
+
+<!-- ───────────────────────────────────────────── -->
+<h2 id="vision"><span class="num">1.</span>Visión general</h2>
+<p>El sistema tiene tres piezas y una herramienta:</p>
+
+<div class="arq">
+  <div class="nodo tel"><h5>📱 App NexCrono Pistola</h5><p>Android + pistola RFID por Bluetooth. Captura, guarda todo en SQLite, sirve archivos por WiFi y verifica su licencia.</p></div>
+  <div class="nodo nx"><h5>⏱️ NexCrono (PC)</h5><p>Recibe las pasadas por <code>/api/pistola</code>, entrega inscritos y hora, vincula teléfonos con QR.</p></div>
+  <div class="nodo host"><h5>☁️ Hosting CodevNexus</h5><p>Servidor PHP de actualizaciones: publica APK firmados que los teléfonos descargan e instalan.</p></div>
+  <div class="flecha">La app habla con NexCrono por la red local o por el túnel, y con el hosting solo para buscar versiones nuevas. Las licencias (.lic) se emiten sin conexión con <code>herramientas/GeneradorLicencias.java</code>.</div>
+</div>
+
+<table>
+  <tr><th>Pieza</th><th>Dónde está</th><th>Quién la implementa</th></tr>
+  <tr><td>App Android</td><td><code>app/</code></td><td>Lista. Se compila en GitHub Actions</td></tr>
+  <tr><td>Servidor de actualizaciones</td><td><code>servidor-actualizaciones/</code></td><td>Listo. Se sube al hosting (sección 5)</td></tr>
+  <tr><td>Generador de licencias</td><td><code>herramientas/GeneradorLicencias.java</code></td><td>Listo. Se usa en la PC de CodevNexus (sección 4)</td></tr>
+  <tr><td>API en NexCrono</td><td>Proyecto NexCrono</td><td><b>Por implementar</b> con <code>docs/INSTRUCCIONES_NEXCRONO.md</code> (sección 6)</td></tr>
+</table>
+
+<!-- ───────────────────────────────────────────── -->
+<h2 id="requisitos"><span class="num">2.</span>Requisitos</h2>
+<table>
+  <tr><th>Para</th><th>Necesitas</th></tr>
+  <tr><td>Compilar la app</td><td>Cuenta de GitHub con el repositorio <code>CoDevNexus/NexCronoPistola</code>, o Android Studio</td></tr>
+  <tr><td>Firmar y emitir licencias</td><td>Java 11 o superior. Sirve el que trae Android Studio: <code>C:\Program Files\Android\Android Studio\jbr\bin\</code></td></tr>
+  <tr><td>Servidor de actualizaciones</td><td>Hosting con PHP 7.4 o superior (cPanel sirve), un subdominio con SSL (HTTPS) y la extensión <code>zip</code> de PHP (recomendada)</td></tr>
+  <tr><td>Teléfonos</td><td>Android 8.0 o superior, con Bluetooth</td></tr>
+  <tr><td>Pistola</td><td>TSL 1128 (o 1153, 1166, 2128) con firmware 5.1.2, en modo SPP, con micro SD si se usará sin el teléfono</td></tr>
+</table>
+
+<!-- ───────────────────────────────────────────── -->
+<h2 id="compilar"><span class="num">3.</span>Compilar y firmar el APK</h2>
+<p>Cada <code>git push</code> compila en <b>GitHub → Actions → Compilar APK</b>. Sin secretos sale un APK de prueba (<code>app-debug.apk</code>). Con los secretos de firma sale <code>app-release.apk</code>, firmado con la llave de CodevNexus, más su <code>apk.sha256</code>.</p>
+
+<h3 id="llave">Crear la llave de firma (una sola vez)</h3>
+<p>Android solo instala una actualización si viene firmada con <b>la misma llave</b> que la versión instalada. Esa llave identifica a CodevNexus como autor.</p>
+<ol class="pasos">
+  <li>Abre <b>CMD</b> en una carpeta segura <b>fuera del repositorio</b>, por ejemplo <code>D:\Llaves</code>.
+<pre><code>"C:\Program Files\Android\Android Studio\jbr\bin\keytool.exe" -genkeypair -v -keystore codevnexus.jks -keyalg RSA -keysize 4096 -validity 10000 -alias codevnexus</code></pre>
+  Usa una contraseña larga. Si te pide una segunda contraseña para la llave, pon la misma.</li>
+  <li>Conviértela a texto para GitHub (en <b>PowerShell</b>):
+<pre><code>[Convert]::ToBase64String([IO.File]::ReadAllBytes("codevnexus.jks")) | Set-Content codevnexus.b64</code></pre></li>
+</ol>
+<div class="caja peligro"><b>Guarda codevnexus.jks y su contraseña en 2 lugares seguros</b>
+Si se pierden, no podrás actualizar la app en los teléfonos: habría que desinstalarla en todos. Nunca la subas al repositorio (el <code>.gitignore</code> ya bloquea <code>*.jks</code>).</div>
+
+<h3 id="secretos">Secretos de GitHub</h3>
+<p>En el repositorio: <b>Settings → Secrets and variables → Actions → New repository secret</b>.</p>
+<table>
+  <tr><th>Secreto</th><th>Valor</th><th>Si falta</th></tr>
+  <tr><td><code>KEYSTORE_BASE64</code></td><td>Todo el contenido de <code>codevnexus.b64</code></td><td rowspan="4">Se compila el APK de prueba (debug)</td></tr>
+  <tr><td><code>KEYSTORE_PASSWORD</code></td><td>Contraseña de la llave</td></tr>
+  <tr><td><code>KEY_ALIAS</code></td><td><code>codevnexus</code></td></tr>
+  <tr><td><code>KEY_PASSWORD</code></td><td>La misma contraseña</td></tr>
+  <tr><td><code>NEXCRONO_LICENSE_KEY</code></td><td>Clave <b>pública</b> de licencias (sección 4)</td><td>La app no controla la licencia (compilación de desarrollo)</td></tr>
+  <tr><td><code>NEXCRONO_UPDATE_URL</code></td><td>URL del servidor de actualizaciones, sin barra final</td><td>La app no busca actualizaciones</td></tr>
+</table>
+<div class="caja aviso"><b>Solo la primera vez</b>
+El APK de prueba y el firmado tienen firmas distintas: hay que <b>desinstalar el de prueba</b> antes de instalar el firmado. Exporta antes los eventos (<i>Eventos → Compartir</i>). Después, todas las actualizaciones se instalan encima sin perder datos.</div>
+
+<!-- ───────────────────────────────────────────── -->
+<h2 id="licencias"><span class="num">4.</span>Licencias</h2>
+<p>La licencia es un archivo <code>.lic</code> firmado digitalmente (ECDSA P-256 / SHA-256), <b>vinculado al código de un teléfono</b> y con fecha de vencimiento o perpetua. La app lleva solo la <b>clave pública</b>: puede verificar licencias, pero no fabricarlas.</p>
+
+<h3 id="lic-llaves">Crear las llaves (una sola vez)</h3>
+<ol class="pasos">
+  <li>Copia <code>herramientas/GeneradorLicencias.java</code> a una carpeta segura, por ejemplo <code>D:\Licencias</code>.</li>
+  <li>En CMD, dentro de esa carpeta:
+<pre><code>"C:\Program Files\Android\Android Studio\jbr\bin\java.exe" GeneradorLicencias.java llaves</code></pre>
+  Crea dos archivos:
+    <ul>
+      <li><code>codevnexus-licencias.key</code>: la <b>clave privada</b>.</li>
+      <li><code>clave-publica.txt</code>: la clave pública, que también se muestra en pantalla.</li>
+    </ul></li>
+  <li>Copia la clave pública en el secreto <code>NEXCRONO_LICENSE_KEY</code> de GitHub y vuelve a compilar. Desde esa compilación, la app exige licencia.</li>
+</ol>
+<div class="caja peligro"><b>La clave privada es lo más importante del sistema de licencias</b>
+Quien la tenga puede emitir licencias. Guárdala en 2 lugares seguros y nunca la subas al repositorio ni la envíes por chat. Si se pierde, hay que crear llaves nuevas, recompilar la app y reemitir todas las licencias.</div>
+
+<h3 id="lic-emitir">Emitir una licencia (cada cliente)</h3>
+<ol class="pasos">
+  <li>El cliente abre <b>Ajustes → Licencia</b> en su teléfono y te envía el <b>código del teléfono</b> (botón <i>Enviar</i>), por ejemplo <code>3EA0-89A2-E98E-AC50</code>.</li>
+  <li>Emite la licencia:
+<pre><code>java GeneradorLicencias.java emitir --telefono 3EA0-89A2-E98E-AC50 --cliente "FastTime Ecuador" --vence 2027-12-31 --plan Pro</code></pre>
+    <table>
+      <tr><th>Opción</th><th>Valores</th></tr>
+      <tr><td><code>--telefono</code></td><td>Código del teléfono (obligatorio)</td></tr>
+      <tr><td><code>--cliente</code></td><td>Nombre del cliente (obligatorio)</td></tr>
+      <tr><td><code>--vence</code></td><td><code>aaaa-mm-dd</code>, <code>perpetua</code> o <code>+365</code> (días desde hoy)</td></tr>
+      <tr><td><code>--plan</code></td><td>Texto libre (por defecto <code>Estandar</code>)</td></tr>
+      <tr><td><code>--salida</code></td><td>Nombre del archivo (por defecto <code>licencia-Cliente-CODIGO.lic</code>)</td></tr>
+      <tr><td><code>--clave</code></td><td>Ruta de la clave privada (por defecto <code>codevnexus-licencias.key</code>)</td></tr>
+    </table></li>
+  <li>Envía el <code>.lic</code> al cliente. Él lo carga en <b>Ajustes → Licencia → Cargar licencia (.lic)</b>.</li>
+</ol>
+<p>Para ver qué contiene una licencia: <code>java GeneradorLicencias.java ver archivo.lic</code></p>
+
+<h3 id="lic-formato">Formato y seguridad</h3>
+<pre><code>NXCLIC1
+&lt;datos en Base64&gt;     ← app=pistola, cliente, telefono, plan, emitida, vence, id
+&lt;firma en Base64&gt;     ← ECDSA P-256 sobre los bytes de los datos</code></pre>
+<table>
+  <tr><th>Situación</th><th>Resultado en la app</th></tr>
+  <tr><td>Licencia válida</td><td>Funciona completa; muestra cliente y días restantes</td></tr>
+  <tr><td>Archivo modificado</td><td>Rechazada: «la firma no corresponde»</td></tr>
+  <tr><td>Licencia de otro teléfono</td><td>Rechazada: «es de otro teléfono»</td></tr>
+  <tr><td>Vencida</td><td>Modo demostración</td></tr>
+  <tr><td>Fecha del teléfono atrasada a propósito</td><td>Bloqueada hasta corregir la fecha</td></tr>
+  <tr><td>Sin licencia</td><td>Modo demostración: hasta <b>25 pasadas por evento</b></td></tr>
+</table>
+<p>El código del teléfono sale del identificador de Android de ese equipo y de la app. Cambia si el teléfono se restablece de fábrica: en ese caso hay que emitir una licencia nueva. La app vuelve a comprobar la licencia cada 5 minutos.</p>
+
+<!-- ───────────────────────────────────────────── -->
+<h2 id="actualizaciones"><span class="num">5.</span>Servidor de actualizaciones</h2>
+<p>Es un panel PHP (<code>servidor-actualizaciones/</code>) donde subes cada APK nuevo. Al abrirse, la app consulta si hay una versión mayor, la descarga, verifica su SHA-256 y Android la instala si la firma coincide.</p>
+
+<h3 id="act-instalar">Instalar en el hosting (una sola vez)</h3>
+<ol class="pasos">
+  <li>Crea un subdominio con SSL, por ejemplo <code>updates.codevnexus.tech</code>.</li>
+  <li>Edita <code>servidor-actualizaciones/config.php</code>:
+    <table>
+      <tr><th>Constante</th><th>Qué poner</th></tr>
+      <tr><td><code>CLAVE_INSTALACION</code></td><td>Una frase larga y única (mínimo 16 caracteres). Solo sirve para crear el administrador la primera vez</td></tr>
+      <tr><td><code>URL_BASE</code></td><td><code>https://updates.codevnexus.tech</code> (o vacío para detectarla sola)</td></tr>
+      <tr><td><code>FORZAR_HTTPS</code></td><td><code>true</code> (solo <code>false</code> en pruebas locales)</td></tr>
+      <tr><td><code>APPS</code></td><td><code>['pistola' =&gt; 'NexCrono Pistola']</code>; se pueden agregar otras apps</td></tr>
+      <tr><td><code>MAX_MB</code></td><td>Tamaño máximo del APK (150 por defecto)</td></tr>
+      <tr><td><code>DIR_DATOS</code></td><td>Si el hosting lo permite, una carpeta <b>fuera de public_html</b>, por ejemplo <code>/home/usuario/nexcrono-datos</code></td></tr>
+      <tr><td><code>MINUTOS_SESION</code>, <code>MAX_INTENTOS</code></td><td>30 minutos de sesión y 5 intentos de login por IP en 15 minutos</td></tr>
+    </table></li>
+  <li>Sube <b>el contenido</b> de la carpeta al subdominio (FTP o administrador de archivos), <b>incluidos los .htaccess</b>.</li>
+  <li>Si tus APK pesan más de 8 MB, en cPanel → <i>Select PHP Version → Options</i> sube <code>upload_max_filesize</code> y <code>post_max_size</code> (por ejemplo a <code>150M</code>).</li>
+  <li>Abre <code>https://updates.codevnexus.tech/</code>, escribe la clave de instalación y crea el usuario administrador (contraseña de 10 caracteres o más).</li>
+  <li>En GitHub crea el secreto <code>NEXCRONO_UPDATE_URL</code> = <code>https://updates.codevnexus.tech</code>, vuelve a compilar e <b>instala ese APK a mano</b> en los teléfonos. Es la primera versión que sabe dónde buscar actualizaciones.</li>
+</ol>
+
+<h3 id="act-publicar">Publicar una versión (cada vez)</h3>
+<ol class="pasos">
+  <li>En <code>app/build.gradle</code> sube <code>versionCode</code> (por ejemplo de 7 a 8) y <code>versionName</code> (de <code>"1.4.1"</code> a <code>"1.4.2"</code>). Haz commit y push.</li>
+  <li>Descarga de <b>Actions</b> el <code>app-release.apk</code>.</li>
+  <li>En el panel → <b>Publicar versión</b>: app, el mismo <code>versionCode</code> y <code>versionName</code>, notas, archivo. Marca <b>Obligatoria</b> si el teléfono no debe poder posponerla.</li>
+  <li>Los teléfonos ven «Nueva versión» al abrir la app → <b>Actualizar</b>. La primera vez Android pide permitir que la app instale aplicaciones.</li>
+</ol>
+<p><b>Retirar</b> una versión deja de ofrecerla. La versión activa anterior solo se ofrece a los teléfonos que tengan un <code>versionCode</code> menor que ella.</p>
+
+<h3 id="act-api">API y protecciones</h3>
+<table>
+  <tr><th>Ruta</th><th>Uso</th></tr>
+  <tr><td><code>GET /api/version.php?app=pistola&amp;v=CODIGO</code></td><td>Pública. Devuelve la última versión activa</td></tr>
+  <tr><td><code>GET /descargar.php?app=pistola&amp;v=CODIGO</code></td><td>Descarga el APK de esa versión</td></tr>
+  <tr><td><code>/</code> (index.php)</td><td>Panel de administración con login</td></tr>
+</table>
+<pre><code>{ "app": "pistola", "versionCode": 8, "versionName": "1.4.2",
+  "url": "https://updates.codevnexus.tech/descargar.php?app=pistola&amp;v=8",
+  "sha256": "…", "tamano": 18450231, "notas": "…", "obligatoria": false, "publicada": "…" }</code></pre>
+<p>Protecciones incluidas:</p>
+<ul>
+  <li>Contraseña con <code>password_hash</code> y bloqueo de 5 intentos fallidos por IP durante 15 minutos.</li>
+  <li>La sesión vence a los 30 minutos; la cookie es <code>HttpOnly</code>, <code>Secure</code> y <code>SameSite=Strict</code>.</li>
+  <li>Token CSRF en todos los formularios.</li>
+  <li>Cabeceras de seguridad: CSP, X-Frame-Options, nosniff y HSTS. HTTPS obligatorio.</li>
+  <li>El APK se valida antes de publicarse: extensión, firma ZIP, que tenga <code>AndroidManifest.xml</code> y tamaño máximo.</li>
+  <li>Los nombres de archivo los genera el servidor, nunca el usuario.</li>
+  <li><code>datos/</code>, <code>config.php</code> y <code>lib.php</code> están bloqueados desde la web.</li>
+  <li>Registro de logins, publicaciones y descargas en <code>datos/registro.log</code>.</li>
+  <li>El teléfono verifica el <b>SHA-256</b> y Android exige <b>la misma firma</b>: aunque alguien entrara al hosting, no podría instalar un APK que no esté firmado con tu llave.</li>
+</ul>
+
+<!-- ───────────────────────────────────────────── -->
+<h2 id="nexcrono"><span class="num">6.</span>Integración con NexCrono</h2>
+<p>La app ya usa este contrato. NexCrono debe implementarlo; el detalle completo está en <code>docs/INSTRUCCIONES_NEXCRONO.md</code>, que se pega en el proyecto de NexCrono como pedido.</p>
+
+<h3 id="nx-vincular">Vinculación por QR</h3>
+<p>NexCrono genera un <b>código de un solo uso</b>: 8 caracteres, vence a los 10 minutos y se guarda solo su hash. Lo muestra como QR con este contenido:</p>
+<pre><code>nexcrono://vincular?u=&lt;URL_BASE&gt;&amp;c=&lt;CODIGO&gt;&amp;p=&lt;PUNTO&gt;&amp;m=&lt;SALIDA|CONTROL&gt;&amp;e=&lt;ID_EVENTO&gt;&amp;en=&lt;NOMBRE_EVENTO&gt;</code></pre>
+<p>La app canjea el código por un <b>token propio del teléfono</b>, que NexCrono puede revocar desde su panel de dispositivos. La URL base debe salir de la configuración de NexCrono (IP local o subdominio del túnel), nunca fija en el código.</p>
+
+<h3 id="nx-api">API <code>/api/pistola</code></h3>
+<p>Todas las rutas llevan <code>Authorization: Bearer &lt;token&gt;</code> y <code>X-Dispositivo: &lt;id&gt;</code>, salvo <code>vincular</code>. Errores: <code>{"error":"…"}</code> con los códigos 400, 401 (token revocado: la app pide volver a vincular), 410, 413, 429 y 500.</p>
+<table>
+  <tr><th>Método y ruta</th><th>Qué hace</th></tr>
+  <tr><td><code>POST /vincular</code></td><td>Canjea el código por un token. Responde <code>token</code>, <code>empresa</code>, <code>punto</code>, <code>modo</code> y <code>evento</code></td></tr>
+  <tr><td><code>GET /hora</code></td><td><code>{"epochMs": …}</code>: reloj de la PC de NexCrono</td></tr>
+  <tr><td><code>GET /eventos</code></td><td>Eventos activos: <code>{"eventos":[{id,nombre,fecha}]}</code></td></tr>
+  <tr><td><code>GET /inscritos?evento=ID</code></td><td>Lista de inscritos: <code>dorsal</code>, <code>chip</code>, <code>epc</code>, <code>nombre</code>, <code>categoria</code>, <code>genero</code>, <code>club</code></td></tr>
+  <tr><td><code>POST /lecturas</code></td><td>Hasta 200 pasadas por envío. Responder 2xx <b>solo después de guardar</b>; ignorar los <code>id</code> repetidos</td></tr>
+</table>
+<p class="etiqueta">Cada lectura que envía la app</p>
+<pre><code>{
+  "id": "0d6c2a0e-3b7d-4a51-9a51-1d2b8f0c9e11",   // UUID único: si llega repetido, se ignora
+  "evento": "42",
+  "dorsal": "446",
+  "numero": "446",                // dorsal, o número de chip si no se conoce el dorsal
+  "chip": "446",                  // YA convertido (TimingSense: 00D601BE00000000 → 446)
+  "epc": "00D601BE00000000",
+  "punto": "PC2",
+  "modo": "CONTROL",              // SALIDA | CONTROL
+  "horaMs": 1763385301123,        // hora según la regla: última en SALIDA, primera en CONTROL
+  "hora": "2026-11-22T08:15:01.123-05:00",
+  "primeraMs": 1763385301123,
+  "ultimaMs": 1763385303870,
+  "rssi": -56,
+  "lecturas": 14,
+  "origen": "vivo",               // vivo | manual | barras | memoria | memoria_aprox
+  "horaSincronizada": true
+}</code></pre>
+
+<h3 id="nx-reglas">Reglas de cronometraje en NexCrono</h3>
+<ul>
+  <li><b>Identificación:</b> manda la relación chip/EPC ↔ dorsal de NexCrono. Si no la hay, se usa el <code>dorsal</code> que envía la app. Si no hay ninguno, la pasada queda como «no inscrito».</li>
+  <li><b>Salida controlada:</b> la hora de salida es <code>horaMs</code>. Con varias pasadas del mismo atleta, la <b>última</b>.</li>
+  <li><b>Punto de control:</b> con varias pasadas del mismo atleta en el punto, la <b>primera</b>. Alimenta el seguimiento en vivo y los parciales.</li>
+  <li><code>manual</code> y <code>barras</code> son horas tomadas a mano: hay que marcarlas para revisión. <code>memoria</code> viene de la SD de la pistola y tiene precisión de 1 segundo. <code>memoria_aprox</code> también viene de la SD, pero sin hora propia (faltaba el AUTO.TXT): su hora es aproximada y requiere revisión.</li>
+  <li><code>horaSincronizada = false</code> debe generar un aviso en el panel de NexCrono.</li>
+</ul>
+
+<h3 id="nx-seguridad">Seguridad obligatoria en NexCrono</h3>
+<ul>
+  <li><b>Tokens:</b> uno por dispositivo, guardados como SHA-256 y comparados en tiempo constante. Se pueden revocar al instante.</li>
+  <li><b>Códigos de vinculación:</b> de un solo uso, vencen a los 10 minutos, se guardan con hash y tienen un límite de 5 intentos por minuto por IP.</li>
+  <li><b>Límites en <code>/lecturas</code>:</b> 2 MB y 500 lecturas por petición, y 120 peticiones por minuto por dispositivo.</li>
+  <li><b>SQL parametrizado</b> y validación de tipos y largos. Los errores no deben mostrar detalles internos.</li>
+  <li><b>Túnel:</b> exponer solo <code>/api/pistola/*</code>. El panel y la generación de QR quedan en la red local.</li>
+  <li><b>Inscritos:</b> enviar solo dorsal, chip, EPC, nombre, categoría, género y club. Nunca cédula, teléfono ni correo.</li>
+</ul>
+
+<!-- ───────────────────────────────────────────── -->
+<h2 id="wifi"><span class="num">7.</span>Servidor WiFi del teléfono</h2>
+<p>La app incluye un servidor web para descargar los archivos de los eventos sin cables ni internet.</p>
+<ol class="pasos">
+  <li>Conecta el teléfono y la PC al <b>mismo WiFi</b>, o la PC al <b>hotspot del teléfono</b>.</li>
+  <li>En la app: <b>Eventos → Compartir por WiFi</b>.</li>
+  <li>En el navegador de la PC, abre la dirección que aparece (por ejemplo <code>http://192.168.1.25:8080</code>) y escribe el <b>PIN</b> de 6 dígitos.</li>
+  <li>Descarga de cualquier evento el Excel completo, las pasadas, todas las lecturas o los participantes.</li>
+</ol>
+<p>Seguridad: el PIN cambia cada vez que se enciende; tras 5 errores se bloquea ese equipo 5 minutos; la sesión es una cookie <code>HttpOnly</code> de 8 horas; desde el navegador no se puede modificar nada. Usa los puertos 8080 a 8090. <b>Apágalo al terminar.</b></p>
+<div class="caja aviso"><b>Redes de hoteles o eventos</b>
+Algunas aíslan a los equipos entre sí y no dejan que se vean. En ese caso, usa el hotspot del teléfono.</div>
+
+<!-- ───────────────────────────────────────────── -->
+<h2 id="archivos"><span class="num">8.</span>Archivos exportables</h2>
+<p>Se generan desde <b>Eventos → Compartir</b>, desde <b>Ajustes → Datos y respaldo</b> o por WiFi, y se guardan en <code>Descargas/NexCrono</code>. El número de chip va <b>siempre ya convertido</b> con la configuración actual. Los CSV usan UTF-8 con BOM, para que Excel abra bien las tildes.</p>
+
+<h3>Excel completo · hoja «Pasadas»</h3>
+<p>Una fila por pasada, es decir, el paso de un atleta por el punto.</p>
+<table>
+  <tr><th>Columna</th><th>Contenido</th></tr>
+  <tr><td>Número</td><td>Dorsal, o número de chip si no se conoce</td></tr>
+  <tr><td>Dorsal · Nombre · Categoría</td><td>De la lista de participantes</td></tr>
+  <tr><td>Número de chip · EPC</td><td>Convertido y original</td></tr>
+  <tr><td>Hora · Primera lectura · Última lectura</td><td><code>aaaa-mm-dd HH:mm:ss.SSS</code></td></tr>
+  <tr><td>RSSI (dBm) · Lecturas</td><td>Mejor señal y cantidad de lecturas</td></tr>
+  <tr><td>Punto · Modo · Dispositivo · Origen</td><td>Dónde, cómo y con qué se capturó</td></tr>
+  <tr><td>Hora sincronizada · Enviado · Evento · ID</td><td>Estado y trazabilidad</td></tr>
+</table>
+
+<h3>Excel completo · hoja «Lecturas» (marcaciones masivas)</h3>
+<p><b>Cada vez que la pistola leyó un chip</b>: en vivo, desde la memoria SD, manual o por código de barras. Sirve para <b>cargar a mano en NexCrono</b> si algo falló, o para revisar una llegada dudosa. También existe como <i>Todas las lecturas · CSV</i>.</p>
+<table>
+  <tr><th>Columna</th><th>Ejemplo</th></tr>
+  <tr><td>Fecha</td><td><code>2026-11-22</code></td></tr>
+  <tr><td>Hora</td><td><code>08:15:01.123</code></td></tr>
+  <tr><td>Número · Dorsal · Nombre</td><td><code>446</code> · <code>446</code> · Ana Pérez</td></tr>
+  <tr><td>Número de chip · EPC</td><td><code>446</code> · <code>00D601BE00000000</code></td></tr>
+  <tr><td>RSSI (dBm)</td><td><code>-48</code> (vacío en memoria y manual)</td></tr>
+  <tr><td>Punto · Modo · Origen · Dispositivo</td><td>PC2 · CONTROL · vivo · Galaxy A15</td></tr>
+  <tr><td>Marca de tiempo (ms)</td><td><code>1763817301123</code> (epoch, para cálculos exactos)</td></tr>
+  <tr><td>ID pasada</td><td>A qué pasada pertenece la lectura</td></tr>
+</table>
+
+<h3>Participantes y estado</h3>
+<p>Columnas: Dorsal, Nombre, Categoría, Número de chip, EPC, <b>Estado</b> (<code>DETECTADO</code>, <code>NO DETECTADO</code> o <code>NO INSCRITO</code>), Hora, Origen y Extra (género y club).</p>
+
+<h3>Carga de participantes en la app</h3>
+<p>Se aceptan Excel (<code>.xlsx</code>, primera hoja) o CSV (separado por coma, punto y coma o tabulador). La app reconoce estos encabezados, en cualquier orden y con o sin tildes:</p>
+<table>
+  <tr><th>Campo</th><th>Encabezados reconocidos</th></tr>
+  <tr><td><b>Dorsal</b> (obligatorio)</td><td>Dorsal, Bib, Número, Nro, Num</td></tr>
+  <tr><td>Nombre</td><td>Nombre, Nombres, Nombre completo, Atleta, Participante, Corredor (se junta con Apellidos)</td></tr>
+  <tr><td>Apellidos</td><td>Apellido, Apellidos</td></tr>
+  <tr><td>Categoría</td><td>Categoría, Cat, División</td></tr>
+  <tr><td>Chip</td><td>Chip, Número chip, Código chip, Tag</td></tr>
+  <tr><td>EPC</td><td>EPC, Código EPC</td></tr>
+  <tr><td>Género · Club</td><td>Género, Sexo, Rama · Club, Equipo, Team</td></tr>
+</table>
+
+<!-- ───────────────────────────────────────────── -->
+<h2 id="puesta"><span class="num">9.</span>Lista de puesta en marcha</h2>
+<h3>Una sola vez (CodevNexus)</h3>
+<ul class="check">
+  <li>Crear la llave de firma <code>codevnexus.jks</code> y guardarla en 2 lugares.</li>
+  <li>Cargar los 4 secretos de firma en GitHub.</li>
+  <li>Crear las llaves de licencias y cargar <code>NEXCRONO_LICENSE_KEY</code>.</li>
+  <li>Subir el servidor de actualizaciones, crear el administrador y cargar <code>NEXCRONO_UPDATE_URL</code>.</li>
+  <li>Compilar, desinstalar el APK de prueba e instalar el firmado.</li>
+  <li>Implementar <code>/api/pistola</code> en NexCrono con <code>INSTRUCCIONES_NEXCRONO.md</code>.</li>
+  <li>Actualizar la pistola al firmware 5.1.2.</li>
+</ul>
+<h3>Por cada cliente o teléfono</h3>
+<ul class="check">
+  <li>Instalar el APK y aceptar permisos y batería sin restricción.</li>
+  <li>Recibir el código del teléfono, emitir la licencia y enviar el <code>.lic</code>.</li>
+  <li>Emparejar la pistola, poner la micro SD y grabar el AUTO.TXT (Pistola → Configuración). Es obligatorio para usar la pistola sin el teléfono.</li>
+  <li>Configurar el número de chip con <i>Detectar con un chip</i>.</li>
+</ul>
+<h3>Por cada evento</h3>
+<ul class="check">
+  <li>Crear el evento o traerlo de NexCrono.</li>
+  <li>Cargar participantes (Excel o CSV) o descargar inscritos.</li>
+  <li>Vincular por QR y sincronizar la hora.</li>
+  <li>Elegir Salida o Punto de control, y la potencia.</li>
+  <li>Al terminar: revisar que no queden pasadas «por enviar» y exportar el Excel completo de respaldo.</li>
+</ul>
+
+<!-- ───────────────────────────────────────────── -->
+<h2 id="problemas"><span class="num">10.</span>Solución de problemas</h2>
+<table>
+  <tr><th>Problema</th><th>Causa probable y solución</th></tr>
+  <tr><td>Actions marca ❌ al compilar</td><td>Abre el paso <i>Compilar APK</i> y copia las líneas <code>e:</code> o <code>error:</code>. Si falla con secretos de firma, revisa que la contraseña y el alias coincidan</td></tr>
+  <tr><td>«La aplicación no se instaló» al actualizar</td><td>El APK nuevo está firmado con otra llave, o tiene un <code>versionCode</code> igual o menor</td></tr>
+  <tr><td>La app no ofrece la versión nueva</td><td>Esa compilación no tiene <code>NEXCRONO_UPDATE_URL</code>, la versión está retirada o su <code>versionCode</code> no es mayor</td></tr>
+  <tr><td>«Licencia no válida: la firma no corresponde»</td><td>El <code>.lic</code> fue editado o se emitió con otra clave privada distinta de la pública que tiene la app</td></tr>
+  <tr><td>«La licencia es de otro teléfono»</td><td>Se emitió con otro código, o el teléfono se restableció de fábrica. Emite una nueva</td></tr>
+  <tr><td>Panel PHP: «Se requiere HTTPS»</td><td>El subdominio no tiene SSL; actívalo (Let's Encrypt en cPanel)</td></tr>
+  <tr><td>Panel PHP: «No llegó el archivo»</td><td>Sube <code>upload_max_filesize</code> y <code>post_max_size</code> en el hosting</td></tr>
+  <tr><td>NexCrono responde 401</td><td>El teléfono fue revocado o desvinculado: vuelve a vincularlo con un QR nuevo</td></tr>
+  <tr><td>Pasadas «por enviar» que no bajan</td><td>Mira <i>Ajustes → Historial</i>. No se pierden: se reenvían cuando vuelve la conexión</td></tr>
+  <tr><td>El navegador no abre la dirección WiFi</td><td>No están en la misma red o la red aísla los equipos; usa el hotspot del teléfono</td></tr>
+  <tr><td>La memoria SD trae «lecturas sin hora»</td><td>Falta el AUTO.TXT en la pistola (Pistola → Grabar configuración en la pistola). Las ya leídas se pueden importar con <b>hora aproximada</b> (origen <code>memoria_aprox</code>)</td></tr>
+  <tr><td>La memoria SD «no tiene lecturas de chips»</td><td>Revisa la micro SD (se recomienda de 32 GB o menos, en FAT32) y lee con el gatillo <b>después</b> de desconectar la app. La app guarda una copia del registro en <code>Descargas/NexCrono/LOG_pistola_….txt</code> para revisar qué trae</td></tr>
+</table>
+
+<footer>
+  NexCrono Pistola · CodevNexus · codevnexus.tech<br>
+  Documentos del proyecto: <code>docs/MANUAL.md</code> (uso) · <code>docs/INSTRUCCIONES_NEXCRONO.md</code> (API NexCrono) · <code>docs/GUIA_FIRMA_Y_ACTUALIZACIONES.md</code> (firma y actualizaciones) · este documento (implementación).
+</footer>
+</main>
+</body>
+</html>

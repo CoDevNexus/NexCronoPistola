@@ -70,10 +70,10 @@ fun EventosScreen() {
     var deNexCrono by remember { mutableStateOf<List<Evento>?>(null) }
     var trabajando by remember { mutableStateOf(false) }
 
-    fun enviarArchivo(e: Evento, excel: Boolean, participantes: Boolean) {
+    fun enviarArchivo(e: Evento, excel: Boolean, tipo: String) {
         scope.launch {
             try {
-                val uri = withContext(Dispatchers.IO) { Exportador.exportarEvento(ctx, e, excel, participantes) }
+                val uri = withContext(Dispatchers.IO) { Exportador.exportarEvento(ctx, e, excel, tipo) }
                 val i = Intent(Intent.ACTION_SEND)
                     .setType(if (excel) Exportador.MIME_XLSX else Exportador.MIME_CSV)
                     .putExtra(Intent.EXTRA_STREAM, uri)
@@ -135,11 +135,20 @@ fun EventosScreen() {
             title = { Text("Compartir «${e.nombre}»") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("El número de chip va ya convertido.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    OutlinedButton(onClick = { compartir = null; enviarArchivo(e, true, false) }, modifier = Modifier.fillMaxWidth()) { Text("Pasadas · Excel") }
-                    OutlinedButton(onClick = { compartir = null; enviarArchivo(e, false, false) }, modifier = Modifier.fillMaxWidth()) { Text("Pasadas · CSV") }
-                    OutlinedButton(onClick = { compartir = null; enviarArchivo(e, true, true) }, modifier = Modifier.fillMaxWidth()) { Text("Participantes y estado · Excel") }
-                    OutlinedButton(onClick = { compartir = null; enviarArchivo(e, false, true) }, modifier = Modifier.fillMaxWidth()) { Text("Participantes y estado · CSV") }
+                    Text(
+                        "El número de chip va ya convertido. «Lecturas» trae cada vez que la pistola leyó un chip, " +
+                            "por si hay que cargarlas a mano en NexCrono.",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(onClick = { compartir = null; enviarArchivo(e, true, Exportador.TIPO_PASADAS) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Excel completo (Pasadas + Lecturas)")
+                    }
+                    OutlinedButton(onClick = { compartir = null; enviarArchivo(e, false, Exportador.TIPO_PASADAS) }, modifier = Modifier.fillMaxWidth()) { Text("Pasadas · CSV") }
+                    OutlinedButton(onClick = { compartir = null; enviarArchivo(e, false, Exportador.TIPO_LECTURAS) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Todas las lecturas · CSV")
+                    }
+                    OutlinedButton(onClick = { compartir = null; enviarArchivo(e, true, Exportador.TIPO_PARTICIPANTES) }, modifier = Modifier.fillMaxWidth()) { Text("Participantes y estado · Excel") }
+                    OutlinedButton(onClick = { compartir = null; enviarArchivo(e, false, Exportador.TIPO_PARTICIPANTES) }, modifier = Modifier.fillMaxWidth()) { Text("Participantes y estado · CSV") }
                 }
             },
             confirmButton = { TextButton(onClick = { compartir = null }) { Text("Cerrar") } },
@@ -278,6 +287,7 @@ private fun TarjetaEvento(
         Row(Modifier.fillMaxWidth()) {
             Cifra(r.pasadas.toString(), "Pasadas", MaterialTheme.colorScheme.onSurface, Modifier.weight(1f))
             Cifra(r.chips.toString(), "Chips", Turquesa, Modifier.weight(1f))
+            Cifra(r.lecturas.toString(), "Lecturas", MaterialTheme.colorScheme.onSurface, Modifier.weight(1f))
             Cifra(r.inscritos.toString(), "Particip.", MaterialTheme.colorScheme.onSurface, Modifier.weight(1f))
             Cifra(r.pendientes.toString(), "Por enviar", if (r.pendientes > 0) Amarillo else Gris, Modifier.weight(1f))
         }

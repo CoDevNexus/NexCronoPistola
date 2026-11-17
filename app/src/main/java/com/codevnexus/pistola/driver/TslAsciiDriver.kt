@@ -62,6 +62,10 @@ class TslAsciiDriver(private val l: DriverListener) : RfidDriver {
     // lectura del registro de la SD
     private var logConectado = false
     private var logSinHora = 0
+    private var logConConexion = 0
+    private var logChips = 0
+    private var logUltimaFecha: Long? = null          // última DT: vista, de cualquier tipo (para hora aproximada)
+    private val logTexto = StringBuilder()
     private var enLog = false
     private var logDt: Long? = null
     private val logLecturas = ArrayList<LecturaMemoria>()
@@ -201,21 +205,27 @@ class TslAsciiDriver(private val l: DriverListener) : RfidDriver {
         // ── Dentro del volcado del registro de la SD: nada se trata como lectura en vivo ──
         if (enLog) {
             logLineas++
+            if (logTexto.length < 8_000_000) logTexto.append(linea).append('\n')
             when {
                 linea.startsWith("LE:") -> {
                     enLog = false
-                    val n = logLecturas.size
-                    var msg = "Memoria leída: $logLineas líneas, $n lecturas sin conexión con hora."
-                    if (logSinHora > 0) {
-                        msg += "\n$logSinHora lecturas sin hora no se pudieron usar: graba la configuración " +
-                            "en la pistola (AUTO.TXT) para que las próximas queden con hora."
-                    }
-                    l.onMemoria(ArrayList(logLecturas), msg)
+                    val exactas = logLecturas.filter { !it.aproximada }
+                    val tiempos = logLecturas.map { it.ts }
+                    val resumen = ResumenSD(
+                        logLineas, logChips, logConConexion, exactas.size, logSinHora,
+                        tiempos.minOrNull(), tiempos.maxOrNull(),
+                    )
+                    l.onMemoria(ArrayList(logLecturas), "Memoria leída", logTexto.toString(), resumen)
                     logLecturas.clear()
+                    logTexto.setLength(0)
                 }
-                // Cada comando nuevo invalida la hora anterior: la hora solo vale si viene DENTRO del inventario
+                // Cada comando nuevo invalida la hora anterior: la hora exacta solo vale si viene DENTRO del inventario
                 linea.startsWith("CS:") -> logDt = null
-                linea.startsWith("DT:") -> logDt = parseDt(linea.substring(3).trim())
+                linea.startsWith("DT:") -> {
+                    val t = parseDt(linea.substring(3).trim())
+                    logDt = t
+                    if (t != null) logUltimaFecha = t
+                }
                 linea.startsWith("EV:") -> {
                     val ev = linea.substring(3).trim().lowercase()
                     when {
@@ -226,10 +236,19 @@ class TslAsciiDriver(private val l: DriverListener) : RfidDriver {
                 }
                 linea.startsWith("EP:") -> {
                     val epc = linea.substring(3).trim().uppercase()
-                    val t = logDt
-                    // Lo leído con el teléfono conectado ya se registró en vivo: solo se importa lo leído sin conexión
-                    if (epc.isNotEmpty() && !logConectado) {
-                        if (t != null) logLecturas.add(LecturaMemoria(epc, t)) else logSinHora++
+                    if (epc.isNotEmpty()) {
+                        logChips++
+                        val t = logDt
+                        when {
+                            // lo leído con el teléfono conectado ya se registró en vivo
+                            logConectado -> logConConexion++
+                            t != null -> logLecturas.add(LecturaMemoria(epc, t))
+                            else -> {
+                                logSinHora++
+                                // sin AUTO.TXT la pistola no pone hora: se guarda con la última fecha del registro
+                                logUltimaFecha?.let { logLecturas.add(LecturaMemoria(epc, it, aproximada = true)) }
+                            }
+                        }
                     }
                 }
             }
@@ -280,7 +299,12 @@ class TslAsciiDriver(private val l: DriverListener) : RfidDriver {
                     logDt = null
                     logLineas = 0
                     logSinHora = 0
+                    logConConexion = 0
+                    logChips = 0
+                    logUltimaFecha = null
                     logConectado = false
+                    logTexto.setLength(0)
+                    logTexto.append(linea).append('\n')
                     logLecturas.clear()
                 }
             }

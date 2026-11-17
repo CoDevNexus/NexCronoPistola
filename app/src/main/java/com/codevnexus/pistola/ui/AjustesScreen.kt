@@ -17,8 +17,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -40,16 +40,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.codevnexus.pistola.BuildConfig
+import com.codevnexus.pistola.core.Actualizador
 import com.codevnexus.pistola.core.ChipDecoder
 import com.codevnexus.pistola.core.ChipModo
 import com.codevnexus.pistola.core.Engine
+import com.codevnexus.pistola.core.Evento
 import com.codevnexus.pistola.core.Exportador
 import com.codevnexus.pistola.core.Modo
 import com.codevnexus.pistola.core.Regla
 import com.codevnexus.pistola.core.Uploader
+import com.codevnexus.pistola.core.Vinculo
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -62,6 +67,7 @@ fun AjustesScreen() {
     val guardado by Engine.ajustes.collectAsState()
     val ultimaEpc by Engine.ultimaEpc.collectAsState()
     val tablaTam by Engine.tablaTam.collectAsState()
+    val inscritosTam by Engine.inscritosTam.collectAsState()
     val servidor by Engine.servidor.collectAsState()
 
     var a by remember(guardado) { mutableStateOf(guardado) }
@@ -69,7 +75,11 @@ fun AjustesScreen() {
     var ventanaTxt by remember(guardado) { mutableStateOf(guardado.ventanaSeg.toString()) }
     var mensaje by remember { mutableStateOf<String?>(null) }
     var confirmarBorrado by remember { mutableStateOf(false) }
+    var confirmarDesvincular by remember { mutableStateOf(false) }
     var trabajando by remember { mutableStateOf(false) }
+    var codigoManual by remember { mutableStateOf("") }
+    var listaEventos by remember { mutableStateOf<List<Evento>?>(null) }
+    var nuevoEvento by remember { mutableStateOf<String?>(null) }
 
     val cambios = a != guardado ||
         digitosTxt != guardado.chipDigitos.toString() || ventanaTxt != guardado.ventanaSeg.toString()
@@ -111,6 +121,13 @@ fun AjustesScreen() {
         }
     }
 
+    val escanear = rememberLauncherForActivityResult(ScanContract()) { r ->
+        val texto = r.contents ?: return@rememberLauncherForActivityResult
+        val v = Vinculo.desde(texto)
+        if (v != null) Engine.vinculoPendiente.value = v
+        else mensaje = "Ese QR no es de vinculación de NexCrono."
+    }
+
     val abrirTabla = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             scope.launch {
@@ -130,6 +147,7 @@ fun AjustesScreen() {
         }
     }
 
+    // ── Diálogos ──
     mensaje?.let {
         AlertDialog(
             onDismissRequest = { mensaje = null },
@@ -140,12 +158,63 @@ fun AjustesScreen() {
     if (confirmarBorrado) {
         AlertDialog(
             onDismissRequest = { confirmarBorrado = false },
-            title = { Text("¿Borrar todas las pasadas?") },
-            text = { Text("Se eliminan del teléfono. Exporta un respaldo antes si lo necesitas.") },
+            title = { Text("¿Borrar las pasadas de este evento?") },
+            text = { Text("Se eliminan del teléfono las pasadas de «${guardado.eventoNombre}». Exporta un respaldo antes si lo necesitas.") },
             confirmButton = {
-                TextButton(onClick = { Engine.borrarTodo(); confirmarBorrado = false }) { Text("Borrar", color = Rojo) }
+                TextButton(onClick = { Engine.borrarEventoActual(); confirmarBorrado = false }) { Text("Borrar", color = Rojo) }
             },
             dismissButton = { TextButton(onClick = { confirmarBorrado = false }) { Text("Cancelar") } },
+        )
+    }
+    if (confirmarDesvincular) {
+        AlertDialog(
+            onDismissRequest = { confirmarDesvincular = false },
+            title = { Text("¿Desvincular de NexCrono?") },
+            text = { Text("El teléfono deja de enviar lecturas. Las pasadas guardadas no se borran.") },
+            confirmButton = {
+                TextButton(onClick = { Uploader.desvincular(); confirmarDesvincular = false }) { Text("Desvincular", color = Rojo) }
+            },
+            dismissButton = { TextButton(onClick = { confirmarDesvincular = false }) { Text("Cancelar") } },
+        )
+    }
+    listaEventos?.let { lista ->
+        AlertDialog(
+            onDismissRequest = { listaEventos = null },
+            title = { Text("Eventos en NexCrono") },
+            text = {
+                Column {
+                    if (lista.isEmpty()) Text("NexCrono no tiene eventos disponibles.")
+                    lista.forEach { e ->
+                        Column(
+                            Modifier.fillMaxWidth().clickable {
+                                listaEventos = null
+                                Engine.cambiarEvento(e)
+                                enFondo { Uploader.descargarInscritos() }
+                            }.padding(vertical = 10.dp)
+                        ) {
+                            Text(e.nombre, fontWeight = FontWeight.Bold)
+                            if (e.fecha.isNotBlank()) Text(e.fecha, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { listaEventos = null }) { Text("Cerrar") } },
+        )
+    }
+    nuevoEvento?.let { nombre ->
+        AlertDialog(
+            onDismissRequest = { nuevoEvento = null },
+            title = { Text("Nuevo evento local") },
+            text = {
+                OutlinedTextField(
+                    value = nombre, onValueChange = { nuevoEvento = it.take(60) },
+                    label = { Text("Nombre") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { Engine.nuevoEventoLocal(nombre); nuevoEvento = null }) { Text("Crear") }
+            },
+            dismissButton = { TextButton(onClick = { nuevoEvento = null }) { Text("Cancelar") } },
         )
     }
 
@@ -155,7 +224,108 @@ fun AjustesScreen() {
     ) {
         item { Spacer(Modifier.height(4.dp)) }
 
-        // ── Captura ──
+        // ── NexCrono ──
+        item {
+            Tarjeta {
+                Titulo("Conexión con NexCrono")
+                if (guardado.vinculado) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Punto(if (servidor.ok) Turquesa else Amarillo)
+                        Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                            Text("Vinculado" + if (guardado.empresa.isNotBlank()) " · ${guardado.empresa}" else "", fontWeight = FontWeight.Bold)
+                            Text(guardado.servidor, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    Text(servidor.mensaje, fontSize = 12.sp, color = if (servidor.ok) Turquesa else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                        Text("Enviar automáticamente", modifier = Modifier.weight(1f))
+                        Switch(checked = a.autoEnvio, onCheckedChange = { a = a.copy(autoEnvio = it) })
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
+                        OutlinedButton(enabled = !trabajando, onClick = { enFondo { Uploader.sincronizarHora() } }, modifier = Modifier.weight(1f)) {
+                            Text("Sincronizar hora")
+                        }
+                        OutlinedButton(enabled = !trabajando, onClick = { enFondo { Uploader.enviarPendientes() } }, modifier = Modifier.weight(1f)) {
+                            Text("Enviar ahora")
+                        }
+                    }
+                    TextButton(onClick = { confirmarDesvincular = true }) { Text("Desvincular", color = Rojo) }
+                } else {
+                    Text(
+                        "En NexCrono genera el QR de vinculación del punto y escanéalo. " +
+                            "También puedes escanearlo con la cámara del teléfono o con la pistola (si tiene lector 2D).",
+                        fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(
+                        onClick = {
+                            escanear.launch(
+                                ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                    .setPrompt("Escanea el QR de NexCrono").setBeepEnabled(false).setOrientationLocked(false)
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(52.dp),
+                    ) { Text("ESCANEAR QR DE NEXCRONO", fontWeight = FontWeight.Bold) }
+                    Spacer(Modifier.height(10.dp))
+                    Text("O a mano:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(
+                        value = a.servidor, onValueChange = { a = a.copy(servidor = it.trim()) },
+                        label = { Text("Dirección (se puede dejar para después)") }, singleLine = true,
+                        placeholder = { Text("http://192.168.1.10:8080") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = codigoManual, onValueChange = { codigoManual = it.trim().uppercase().take(20) },
+                        label = { Text("Código de vinculación") }, singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedButton(
+                        enabled = !trabajando && a.servidor.startsWith("http") && codigoManual.isNotBlank(),
+                        onClick = {
+                            Engine.vinculoPendiente.value = Vinculo(a.servidor.trimEnd('/'), codigoManual, null, null, null, null)
+                            codigoManual = ""
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Vincular") }
+                }
+            }
+        }
+
+        // ── Evento ──
+        item {
+            Tarjeta {
+                Titulo("Evento")
+                Text(guardado.eventoNombre, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text(
+                    (if (guardado.eventoLocal) "Evento local" else "Evento de NexCrono") + " · $inscritosTam inscritos",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                    OutlinedButton(
+                        enabled = guardado.vinculado && !trabajando,
+                        onClick = {
+                            trabajando = true
+                            scope.launch {
+                                try {
+                                    listaEventos = withContext(Dispatchers.IO) { Uploader.eventos() }
+                                } catch (e: Exception) {
+                                    mensaje = "No se pudieron traer los eventos: ${e.message}"
+                                }
+                                trabajando = false
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Elegir de NexCrono") }
+                    OutlinedButton(onClick = { nuevoEvento = "" }, modifier = Modifier.weight(1f)) { Text("Nuevo local") }
+                }
+                Text(
+                    "Cada evento guarda sus propias pasadas. Cambiar de evento no borra nada.",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+        }
+
+        // ── Punto de captura ──
         item {
             Tarjeta {
                 Titulo("Punto de captura")
@@ -212,13 +382,13 @@ fun AjustesScreen() {
                 Opcion(a.regla == Regla.MEJOR, "Mejor señal (más cerca de la antena)", null) {
                     a = a.copy(regla = Regla.MEJOR)
                 }
-                Text(
-                    "NexCrono recibe también la primera y la última lectura, por si prefiere aplicar su propia regla.",
-                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
-                    Text("Pitido al capturar un chip", modifier = Modifier.weight(1f))
+                    Text("Pitido al capturar", modifier = Modifier.weight(1f))
                     Switch(checked = a.sonido, onCheckedChange = { a = a.copy(sonido = it) })
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Vibrar al capturar", modifier = Modifier.weight(1f))
+                    Switch(checked = a.vibrar, onCheckedChange = { a = a.copy(vibrar = it) })
                 }
             }
         }
@@ -227,6 +397,11 @@ fun AjustesScreen() {
         item {
             Tarjeta {
                 Titulo("Número de chip")
+                Text(
+                    "Si NexCrono envía la lista de inscritos con el EPC o el chip de cada atleta, " +
+                        "la app muestra directamente el dorsal y el nombre.",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Opcion(a.chipModo == ChipModo.ULTIMOS, "Últimos dígitos del EPC", "Ej.: …000001234 → 1234") {
                     a = a.copy(chipModo = ChipModo.ULTIMOS)
                 }
@@ -272,67 +447,64 @@ fun AjustesScreen() {
             }
         }
 
-        // ── NexCrono ──
-        item {
-            Tarjeta {
-                Titulo("Conexión con NexCrono")
-                OutlinedTextField(
-                    value = a.servidor, onValueChange = { a = a.copy(servidor = it.trim()) },
-                    label = { Text("Dirección (ej. http://192.168.1.10:8080)") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = a.token, onValueChange = { a = a.copy(token = it.trim()) },
-                    label = { Text("Token") }, singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
-                    Text("Enviar automáticamente", modifier = Modifier.weight(1f))
-                    Switch(checked = a.autoEnvio, onCheckedChange = { a = a.copy(autoEnvio = it) })
-                }
-                Text(servidor.mensaje, fontSize = 12.sp, color = if (servidor.ok) Turquesa else MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        enabled = !trabajando && !cambios,
-                        onClick = { enFondo { Uploader.sincronizarHora() } },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Probar / sincronizar hora") }
-                    OutlinedButton(
-                        enabled = !trabajando && !cambios,
-                        onClick = { enFondo { Uploader.enviarPendientes() } },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Enviar ahora") }
-                }
-                if (cambios) {
-                    Text("Guarda los ajustes para probar la conexión.", fontSize = 12.sp, color = Amarillo)
-                }
-            }
-        }
-
         // ── Datos ──
         item {
             Tarjeta {
-                Titulo("Datos y respaldo")
+                Titulo("Datos y respaldo del evento")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { exportar(false) }, modifier = Modifier.weight(1f)) { Text("Exportar CSV") }
                     OutlinedButton(onClick = { exportar(true) }, modifier = Modifier.weight(1f)) { Text("Exportar Excel") }
                 }
                 OutlinedButton(
-                    onClick = { enFondo { Engine.db.reenviarTodo(); Engine.marcarSucio(); "Todas las pasadas se volverán a enviar" } },
+                    onClick = {
+                        enFondo {
+                            Engine.db.reenviarEvento(Engine.ajustes.value.eventoId)
+                            Engine.marcarSucio()
+                            "Las pasadas de este evento se volverán a enviar"
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Marcar todo para reenviar") }
+                ) { Text("Marcar evento para reenviar") }
                 OutlinedButton(
                     onClick = { confirmarBorrado = true },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Rojo),
-                ) { Text("Borrar todas las pasadas") }
+                ) { Text("Borrar pasadas de este evento") }
                 Text(
                     "Los archivos quedan en Descargas/NexCrono.",
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+
+        // ── Versión ──
+        item {
+            Tarjeta {
+                Titulo("Versión")
+                Text("NexCrono Pistola ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+                if (Actualizador.disponible) {
+                    OutlinedButton(
+                        enabled = !trabajando,
+                        onClick = {
+                            trabajando = true
+                            scope.launch {
+                                try {
+                                    val r = withContext(Dispatchers.IO) { Actualizador.buscar() }
+                                    if (r == null) mensaje = "Ya tienes la última versión" else Engine.actualizacion.value = r
+                                } catch (e: Exception) {
+                                    mensaje = "No se pudo consultar: ${e.message}"
+                                }
+                                trabajando = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    ) { Text("Buscar actualización") }
+                } else {
+                    Text(
+                        "Actualizaciones automáticas: sin servidor configurado en esta compilación.",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
 

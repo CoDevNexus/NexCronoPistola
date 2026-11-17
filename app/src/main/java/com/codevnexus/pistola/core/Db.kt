@@ -7,7 +7,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
 /** Todo queda guardado en el teléfono: si la app se cierra o no hay red, no se pierde nada. */
-class Db(ctx: Context) : SQLiteOpenHelper(ctx, "pistola.db", null, 1) {
+class Db(ctx: Context) : SQLiteOpenHelper(ctx, "pistola.db", null, 2) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -17,18 +17,46 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "pistola.db", null, 1) {
                 primera INTEGER, ultima INTEGER, mejor_ts INTEGER, rssi INTEGER,
                 lecturas INTEGER, hora INTEGER,
                 cerrada INTEGER NOT NULL DEFAULT 0, enviado INTEGER NOT NULL DEFAULT 0,
-                origen TEXT, sincronizado INTEGER)"""
+                origen TEXT, sincronizado INTEGER,
+                evento TEXT NOT NULL DEFAULT '', dorsal TEXT, nombre TEXT, categoria TEXT)"""
         )
         db.execSQL("CREATE INDEX ix_envio ON pasadas(cerrada, enviado)")
         db.execSQL("CREATE INDEX ix_primera ON pasadas(primera)")
         db.execSQL("CREATE TABLE mapa(epc TEXT PRIMARY KEY, chip TEXT NOT NULL)")
+        crearV2(db)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    private fun crearV2(db: SQLiteDatabase) {
+        db.execSQL("CREATE INDEX IF NOT EXISTS ix_evento ON pasadas(evento, primera)")
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS inscritos(
+                evento TEXT NOT NULL, dorsal TEXT NOT NULL, chip TEXT, epc TEXT,
+                nombre TEXT, categoria TEXT, extra TEXT, PRIMARY KEY(evento, dorsal))"""
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS eventos(id TEXT PRIMARY KEY, nombre TEXT, fecha TEXT, local INTEGER)"
+        )
+    }
+
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE pasadas ADD COLUMN evento TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE pasadas ADD COLUMN dorsal TEXT")
+            db.execSQL("ALTER TABLE pasadas ADD COLUMN nombre TEXT")
+            db.execSQL("ALTER TABLE pasadas ADD COLUMN categoria TEXT")
+            crearV2(db)
+            // lo leído con la versión 1.0 queda en su propio evento
+            db.execSQL("UPDATE pasadas SET evento = 'anterior'")
+            db.execSQL("INSERT OR IGNORE INTO eventos VALUES('anterior', 'Lecturas versión 1.0', '', 1)")
+        }
+    }
+
+    // ───────────── Pasadas ─────────────
 
     fun guardar(p: Pasada) {
         val cv = ContentValues().apply {
-            put("id", p.id); put("epc", p.epc); put("chip", p.chip)
+            put("id", p.id); put("evento", p.evento); put("epc", p.epc); put("chip", p.chip)
+            put("dorsal", p.dorsal); put("nombre", p.nombre); put("categoria", p.categoria)
             put("punto", p.punto); put("modo", p.modo); put("dispositivo", p.dispositivo)
             put("primera", p.primera); put("ultima", p.ultima); put("mejor_ts", p.mejorTs)
             if (p.rssi != null) put("rssi", p.rssi) else putNull("rssi")
@@ -39,10 +67,11 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "pistola.db", null, 1) {
         writableDatabase.insertWithOnConflict("pasadas", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
-    fun recientes(limite: Int): List<Pasada> =
-        consulta("SELECT * FROM pasadas ORDER BY primera DESC LIMIT $limite")
+    fun recientes(evento: String, limite: Int): List<Pasada> =
+        consulta("SELECT * FROM pasadas WHERE evento = ? ORDER BY primera DESC LIMIT $limite", evento)
 
-    fun todas(): List<Pasada> = consulta("SELECT * FROM pasadas ORDER BY hora ASC")
+    fun todas(evento: String): List<Pasada> =
+        consulta("SELECT * FROM pasadas WHERE evento = ? ORDER BY hora ASC", evento)
 
     fun abiertas(): List<Pasada> = consulta("SELECT * FROM pasadas WHERE cerrada = 0")
 
@@ -61,35 +90,121 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "pistola.db", null, 1) {
         }
     }
 
-    fun reenviarTodo() {
-        writableDatabase.execSQL("UPDATE pasadas SET enviado = 0")
+    fun reenviarEvento(evento: String) {
+        writableDatabase.execSQL("UPDATE pasadas SET enviado = 0 WHERE evento = ?", arrayOf(evento))
     }
 
-    fun estadisticas(): Estadisticas {
+    fun estadisticas(evento: String): Estadisticas {
         readableDatabase.rawQuery(
             "SELECT COUNT(*), COUNT(DISTINCT chip), " +
-                "SUM(CASE WHEN cerrada = 1 AND enviado = 0 THEN 1 ELSE 0 END) FROM pasadas", null
+                "SUM(CASE WHEN cerrada = 1 AND enviado = 0 THEN 1 ELSE 0 END) FROM pasadas WHERE evento = ?",
+            arrayOf(evento)
         ).use { c ->
             return if (c.moveToFirst()) Estadisticas(c.getInt(1), c.getInt(0), c.getInt(2)) else Estadisticas()
         }
     }
 
-    fun recalcularChips(f: (String) -> String) {
+    fun pendientesTotales(): Int =
+        android.database.DatabaseUtils.queryNumEntries(readableDatabase, "pasadas", "cerrada = 1 AND enviado = 0").toInt()
+
+    fun dorsalesLeidos(evento: String): Set<String> {
+        val s = HashSet<String>()
+        readableDatabase.rawQuery(
+            "SELECT DISTINCT dorsal FROM pasadas WHERE evento = ? AND dorsal IS NOT NULL", arrayOf(evento)
+        ).use { c -> while (c.moveToNext()) s.add(c.getString(0)) }
+        return s
+    }
+
+    fun chipsDesconocidos(evento: String): Int {
+        readableDatabase.rawQuery(
+            "SELECT COUNT(DISTINCT epc) FROM pasadas WHERE evento = ? AND dorsal IS NULL", arrayOf(evento)
+        ).use { c -> return if (c.moveToFirst()) c.getInt(0) else 0 }
+    }
+
+    /** Recalcula chip y datos del inscrito de cada pasada del evento (tras importar inscritos o cambiar la conversión). */
+    fun reasignar(evento: String, chipDe: (String) -> String, inscritoDe: (epc: String, chip: String) -> Inscrito?) {
         val db = writableDatabase
-        val epcs = mutableListOf<String>()
-        db.rawQuery("SELECT DISTINCT epc FROM pasadas", null).use { c -> while (c.moveToNext()) epcs.add(c.getString(0)) }
+        val filas = ArrayList<Pair<String, String>>()   // id, epc
+        db.rawQuery("SELECT id, epc FROM pasadas WHERE evento = ? AND origen = 'vivo'", arrayOf(evento)).use { c ->
+            while (c.moveToNext()) filas.add(c.getString(0) to c.getString(1))
+        }
         db.beginTransaction()
         try {
-            for (e in epcs) db.execSQL("UPDATE pasadas SET chip = ? WHERE epc = ?", arrayOf(f(e), e))
+            for ((id, epc) in filas) {
+                val chip = chipDe(epc)
+                val i = inscritoDe(epc, chip)
+                db.execSQL(
+                    "UPDATE pasadas SET chip = ?, dorsal = ?, nombre = ?, categoria = ? WHERE id = ?",
+                    arrayOf<Any?>(chip, i?.dorsal, i?.nombre, i?.categoria, id)
+                )
+            }
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
         }
     }
 
-    fun borrarTodo() {
-        writableDatabase.execSQL("DELETE FROM pasadas")
+    fun borrarEvento(evento: String) {
+        writableDatabase.execSQL("DELETE FROM pasadas WHERE evento = ?", arrayOf(evento))
     }
+
+    // ───────────── Inscritos y eventos ─────────────
+
+    fun guardarInscritos(evento: String, lista: List<Inscrito>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.execSQL("DELETE FROM inscritos WHERE evento = ?", arrayOf(evento))
+            for (i in lista) {
+                val cv = ContentValues().apply {
+                    put("evento", evento); put("dorsal", i.dorsal); put("chip", i.chip); put("epc", i.epc)
+                    put("nombre", i.nombre); put("categoria", i.categoria); put("extra", i.extra)
+                }
+                db.insertWithOnConflict("inscritos", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun inscritos(evento: String): List<Inscrito> {
+        val l = ArrayList<Inscrito>()
+        readableDatabase.rawQuery(
+            "SELECT dorsal, chip, epc, nombre, categoria, extra FROM inscritos WHERE evento = ?", arrayOf(evento)
+        ).use { c ->
+            while (c.moveToNext()) {
+                l.add(
+                    Inscrito(
+                        c.getString(0), c.getString(1) ?: "", c.getString(2) ?: "",
+                        c.getString(3) ?: "", c.getString(4) ?: "", c.getString(5) ?: ""
+                    )
+                )
+            }
+        }
+        return l
+    }
+
+    fun guardarEvento(e: Evento) {
+        val cv = ContentValues().apply {
+            put("id", e.id); put("nombre", e.nombre); put("fecha", e.fecha); put("local", if (e.local) 1 else 0)
+        }
+        writableDatabase.insertWithOnConflict("eventos", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    fun eventos(): List<Evento> {
+        val l = ArrayList<Evento>()
+        readableDatabase.rawQuery(
+            "SELECT e.id, e.nombre, e.fecha, e.local FROM eventos e " +
+                "LEFT JOIN (SELECT evento, MAX(primera) m FROM pasadas GROUP BY evento) p ON p.evento = e.id " +
+                "ORDER BY COALESCE(p.m, 0) DESC, e.fecha DESC", null
+        ).use { c ->
+            while (c.moveToNext()) l.add(Evento(c.getString(0), c.getString(1) ?: "", c.getString(2) ?: "", c.getInt(3) == 1))
+        }
+        return l
+    }
+
+    // ───────────── Tabla EPC → chip ─────────────
 
     fun cargarMapa(): Map<String, String> {
         val m = HashMap<String, String>()
@@ -114,19 +229,24 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "pistola.db", null, 1) {
         }
     }
 
-    private fun consulta(sql: String): List<Pasada> {
+    private fun consulta(sql: String, vararg args: String): List<Pasada> {
         val out = ArrayList<Pasada>()
-        readableDatabase.rawQuery(sql, null).use { c -> while (c.moveToNext()) out.add(leer(c)) }
+        readableDatabase.rawQuery(sql, if (args.isEmpty()) null else arrayOf(*args)).use { c ->
+            while (c.moveToNext()) out.add(leer(c))
+        }
         return out
     }
 
     private fun leer(c: Cursor): Pasada {
         fun s(n: String) = c.getString(c.getColumnIndexOrThrow(n)) ?: ""
+        fun sn(n: String): String? = c.getColumnIndexOrThrow(n).let { if (c.isNull(it)) null else c.getString(it) }
         fun l(n: String) = c.getLong(c.getColumnIndexOrThrow(n))
         fun i(n: String) = c.getInt(c.getColumnIndexOrThrow(n))
         val ri = c.getColumnIndexOrThrow("rssi")
         return Pasada(
-            id = s("id"), epc = s("epc"), chip = s("chip"), punto = s("punto"), modo = s("modo"),
+            id = s("id"), evento = s("evento"), epc = s("epc"), chip = s("chip"),
+            dorsal = sn("dorsal"), nombre = sn("nombre"), categoria = sn("categoria"),
+            punto = s("punto"), modo = s("modo"),
             dispositivo = s("dispositivo"), primera = l("primera"), ultima = l("ultima"),
             mejorTs = l("mejor_ts"), rssi = if (c.isNull(ri)) null else c.getInt(ri),
             lecturas = i("lecturas"), hora = l("hora"), cerrada = i("cerrada") == 1,

@@ -16,6 +16,8 @@ interface DriverListener {
     fun onConectado()
     fun onDesconectado(motivo: String?, porUsuario: Boolean)
     fun onTag(epc: String, rssi: Int?)
+    /** Código leído con el escáner 2D (dorsal impreso o QR de vinculación). */
+    fun onCodigoBarras(codigo: String)
     fun onBateria(porcentaje: Int)
     fun onInfo(clave: String, valor: String)
     fun onLinea(linea: String, saliente: Boolean)

@@ -111,7 +111,7 @@ class TslAsciiDriver(private val l: DriverListener) : RfidDriver {
             "RI" -> emitirPendiente(valor.toIntOrNull())
             "BC" -> {
                 emitirPendiente(null)
-                l.onInfo("Último código de barras", valor)
+                if (valor.isNotEmpty()) l.onCodigoBarras(valor)
             }
             "BP" -> {
                 emitirPendiente(null)

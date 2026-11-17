@@ -82,6 +82,7 @@ fun PistolaScreen() {
     var aviso by remember { mutableStateOf<String?>(null) }
     var comando by remember { mutableStateOf("") }
     var potencia by remember { mutableFloatStateOf((ajustes.potencia ?: 29).toFloat()) }
+    var comandosIni by remember(ajustes.comandosConectar) { mutableStateOf(ajustes.comandosConectar) }
 
     DisposableEffect(Unit) {
         val receptor = object : BroadcastReceiver() {
@@ -359,6 +360,32 @@ fun PistolaScreen() {
                                 aviso = "Falta el permiso de Bluetooth."
                             }
                         }) { Text("Emparejar") }
+                    }
+                }
+            }
+        }
+
+        // ── Comandos al conectar (gatillo, etc.) ──
+        if (conexion.comandos) {
+            item {
+                Tarjeta {
+                    Titulo("Comandos al conectar (avanzado)")
+                    Text(
+                        "Se envían a la pistola cada vez que se conecta. Sirven para dejarla configurada, " +
+                            "por ejemplo el comportamiento del gatillo. Uno por línea; las líneas con # se ignoran.",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = comandosIni, onValueChange = { comandosIni = it },
+                        placeholder = { Text("# comandos del protocolo TSL ASCII 2") },
+                        minLines = 3, modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                    )
+                    if (comandosIni != ajustes.comandosConectar) {
+                        Button(
+                            onClick = { Engine.guardarAjustes(ajustes.copy(comandosConectar = comandosIni)) },
+                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        ) { Text("Guardar") }
                     }
                 }
             }

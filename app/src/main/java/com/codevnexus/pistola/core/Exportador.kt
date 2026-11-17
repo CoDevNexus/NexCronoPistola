@@ -17,19 +17,19 @@ object Exportador {
     const val MIME_CSV = "text/csv"
 
     private val encabezados = arrayOf(
-        "Chip", "EPC", "Hora", "Primera lectura", "Última lectura", "RSSI (dBm)", "Lecturas",
-        "Punto", "Modo", "Dispositivo", "Origen", "Hora sincronizada", "Enviado", "ID"
+        "Dorsal", "Nombre", "Categoría", "Chip", "EPC", "Hora", "Primera lectura", "Última lectura", "RSSI (dBm)", "Lecturas",
+        "Punto", "Modo", "Dispositivo", "Origen", "Hora sincronizada", "Enviado", "Evento", "ID"
     )
 
     private fun fila(p: Pasada, f: SimpleDateFormat): Array<Any?> = arrayOf(
-        p.chip, p.epc, f.format(Date(p.hora)), f.format(Date(p.primera)), f.format(Date(p.ultima)),
+        p.dorsal ?: "", p.nombre ?: "", p.categoria ?: "", p.chip, p.epc, f.format(Date(p.hora)), f.format(Date(p.primera)), f.format(Date(p.ultima)),
         p.rssi, p.lecturas, p.punto, p.modo, p.dispositivo, p.origen,
-        if (p.sincronizado) "SI" else "NO", if (p.enviado) "SI" else "NO", p.id
+        if (p.sincronizado) "SI" else "NO", if (p.enviado) "SI" else "NO", Engine.ajustes.value.eventoNombre, p.id
     )
 
     /** @return Uri del archivo creado en Descargas */
     fun exportar(ctx: Context, excel: Boolean): Uri {
-        val datos = Engine.db.todas()
+        val datos = Engine.db.todas(Engine.ajustes.value.eventoId)
         if (datos.isEmpty()) throw IOException("No hay pasadas para exportar")
         val f = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
         val punto = Engine.ajustes.value.nombrePunto.replace(Regex("[^A-Za-z0-9_-]"), "_")

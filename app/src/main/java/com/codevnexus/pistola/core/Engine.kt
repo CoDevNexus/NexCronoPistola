@@ -6,10 +6,15 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import com.codevnexus.pistola.MainActivity
 import com.codevnexus.pistola.R
 import com.codevnexus.pistola.driver.DriverListener
@@ -17,6 +22,9 @@ import com.codevnexus.pistola.driver.Drivers
 import com.codevnexus.pistola.driver.RfidDriver
 import com.codevnexus.pistola.service.LectorService
 import kotlinx.coroutines.flow.MutableStateFlow
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -43,13 +51,24 @@ object Engine {
     val leyendo = MutableStateFlow(false)
     val recientes = MutableStateFlow<List<Pasada>>(emptyList())
     val stats = MutableStateFlow(Estadisticas())
+    val control = MutableStateFlow(Control())
     val servidor = MutableStateFlow(Servidor())
     val consola = MutableStateFlow<List<String>>(emptyList())
     val ultimaEpc = MutableStateFlow<String?>(null)
     val tablaTam = MutableStateFlow(0)
+    val inscritosTam = MutableStateFlow(0)
+    val aviso = MutableStateFlow<Aviso?>(null)
+    val vinculoPendiente = MutableStateFlow<Vinculo?>(null)
+    val actualizacion = MutableStateFlow<Actualizacion?>(null)
 
     @Volatile var desfaseReloj: Long? = null
     @Volatile private var tabla: Map<String, String> = emptyMap()
+
+    // inscritos del evento actual
+    @Volatile private var inscritos: List<Inscrito> = emptyList()
+    @Volatile private var porEpc: Map<String, Inscrito> = emptyMap()
+    @Volatile private var porChip: Map<String, Inscrito> = emptyMap()
+    @Volatile private var porDorsal: Map<String, Inscrito> = emptyMap()
 
     private var iniciado = false
     private val sched = Executors.newScheduledThreadPool(2)
@@ -69,9 +88,17 @@ object Engine {
         if (iniciado) return
         app = ctx.applicationContext
         db = Db(app)
-        ajustes.value = Ajustes.cargar(app)
+        var a = Ajustes.cargar(app)
+        if (a.eventoId.isBlank()) {
+            val e = Evento("local-" + UUID.randomUUID().toString().take(8), Ajustes.nombreEventoLocal(), hoy(), true)
+            db.guardarEvento(e)
+            a = a.copy(eventoId = e.id, eventoNombre = e.nombre, eventoLocal = true)
+            Ajustes.guardar(app, a)
+        }
+        ajustes.value = a
         tabla = db.cargarMapa()
         tablaTam.value = tabla.size
+        cargarInscritos()
         // pasadas que quedaron abiertas si la app se cerró: se reabren para cerrarlas bien
         for (p in db.abiertas()) abiertas[p.epc] = p
         crearCanal()
@@ -85,13 +112,19 @@ object Engine {
         try { f() } catch (t: Throwable) { log("! " + (t.message ?: t.javaClass.simpleName)) }
     }
 
+    fun enSegundoPlano(f: () -> Unit) {
+        sched.execute { seguro(f) }
+    }
+
+    private fun hoy() = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+
     // ───────────────────────── Ajustes ─────────────────────────
 
     fun guardarAjustes(a: Ajustes) {
         val antes = ajustes.value
         ajustes.value = a
         Ajustes.guardar(app, a)
-        if (a.chipModo != antes.chipModo || a.chipDigitos != antes.chipDigitos) recalcularChips()
+        if (a.chipModo != antes.chipModo || a.chipDigitos != antes.chipDigitos) reasignarPasadas()
         if (a.potencia != antes.potencia) driver?.fijarPotencia(a.potencia)
         if (a.servidor != antes.servidor) desfaseReloj = null
         sucio = true
@@ -101,20 +134,64 @@ object Engine {
         db.guardarMapa(m)
         tabla = m
         tablaTam.value = m.size
-        recalcularChips()
+        reasignarPasadas()
     }
 
     fun tablaParaVista(): Map<String, String> = tabla
 
     fun decodificar(epc: String) = ChipDecoder.decodificar(epc, ajustes.value, tabla)
 
-    private fun recalcularChips() {
+    private fun buscarInscrito(epc: String, chip: String): Inscrito? =
+        porEpc[epc.uppercase()] ?: porChip[chip] ?: porChip[chip.trimStart('0')]
+
+    private fun reasignarPasadas() {
         synchronized(this) {
-            db.recalcularChips { decodificar(it) }
-            for (p in abiertas.values) p.chip = decodificar(p.epc)
+            db.reasignar(ajustes.value.eventoId, { decodificar(it) }, { e, c -> buscarInscrito(e, c) })
+            for (p in abiertas.values) {
+                p.chip = decodificar(p.epc)
+                val i = buscarInscrito(p.epc, p.chip)
+                p.dorsal = i?.dorsal; p.nombre = i?.nombre; p.categoria = i?.categoria
+            }
         }
         sucio = true
     }
+
+    // ───────────────────────── Eventos e inscritos ─────────────────────────
+
+    private fun cargarInscritos() {
+        val l = db.inscritos(ajustes.value.eventoId)
+        inscritos = l
+        porDorsal = l.associateBy { it.dorsal }
+        porEpc = l.filter { it.epc.isNotBlank() }.associateBy { it.epc.uppercase() }
+        porChip = l.filter { it.chip.isNotBlank() }.flatMap { listOf(it.chip to it, it.chip.trimStart('0') to it) }.toMap()
+        inscritosTam.value = l.size
+    }
+
+    fun guardarInscritos(evento: String, lista: List<Inscrito>) {
+        db.guardarInscritos(evento, lista)
+        if (evento == ajustes.value.eventoId) {
+            cargarInscritos()
+            reasignarPasadas()
+        }
+    }
+
+    fun cambiarEvento(e: Evento) {
+        cerrarTodas()
+        db.guardarEvento(e)
+        guardarAjustes(ajustes.value.copy(eventoId = e.id, eventoNombre = e.nombre, eventoLocal = e.local))
+        cargarInscritos()
+        sucio = true
+    }
+
+    fun nuevoEventoLocal(nombre: String) {
+        val e = Evento(
+            "local-" + UUID.randomUUID().toString().take(8),
+            nombre.ifBlank { Ajustes.nombreEventoLocal() }, hoy(), true
+        )
+        cambiarEvento(e)
+    }
+
+    fun buscarPorDorsal(dorsal: String): Inscrito? = porDorsal[dorsal.trim()]
 
     // ───────────────────────── Conexión ─────────────────────────
 
@@ -135,7 +212,7 @@ object Engine {
         val dir = ajustes.value.ultimaPistola
         if (dir.isBlank()) return false
         return try {
-            val bt = app.getSystemService(android.bluetooth.BluetoothManager::class.java)?.adapter ?: return false
+            val bt = app.getSystemService(BluetoothManager::class.java)?.adapter ?: return false
             if (!bt.isEnabled) return false
             val dev = bt.getRemoteDevice(dir)
             pistola = dev
@@ -186,8 +263,6 @@ object Engine {
         driver?.detenerContinuo()
     }
 
-    fun leerUnaVez() = driver?.leerUnaVez()
-
     fun actualizarInfo() {
         info.value = emptyList()
         driver?.pedirInfo()
@@ -200,7 +275,7 @@ object Engine {
         if (cmd.isNotBlank()) driver?.enviarComando(cmd)
     }
 
-    // ───────────────────────── DriverListener ─────────────────────────
+    // ───────────────────────── Eventos del driver ─────────────────────────
 
     /** Solo deja pasar eventos del driver vigente (evita que una conexión vieja pise a la nueva). */
     private class Oyente : DriverListener {
@@ -210,16 +285,22 @@ object Engine {
         override fun onDesconectado(motivo: String?, porUsuario: Boolean) {
             if (vigente()) Engine.onDesconectado(motivo, porUsuario)
         }
-        override fun onTag(epc: String, rssi: Int?) { if (vigente()) Engine.onTag(epc, rssi) }
-        override fun onBateria(porcentaje: Int) { if (vigente()) Engine.onBateria(porcentaje) }
-        override fun onInfo(clave: String, valor: String) { if (vigente()) Engine.onInfo(clave, valor) }
-        override fun onLinea(linea: String, saliente: Boolean) { Engine.onLinea(linea, saliente) }
+        override fun onTag(epc: String, rssi: Int?) { if (vigente()) Engine.registrarLectura(epc, rssi) }
+        override fun onCodigoBarras(codigo: String) { if (vigente()) Engine.onCodigoBarras(codigo) }
+        override fun onBateria(porcentaje: Int) { if (vigente()) Engine.bateria.value = porcentaje.coerceIn(0, 100) }
+        override fun onInfo(clave: String, valor: String) {
+            if (vigente()) Engine.info.value = Engine.info.value.filter { it.first != clave } + (clave to valor)
+        }
+        override fun onLinea(linea: String, saliente: Boolean) { Engine.log((if (saliente) "→ " else "← ") + linea) }
         override fun onError(mensaje: String) { if (vigente()) Engine.onError(mensaje) }
     }
 
     private fun onConectado() {
         conexion.value = Conexion(Estado.CONECTADO, pistolaNombre, "Conectada", driver?.soportaComandos ?: true)
         actualizarInfo()
+        // comandos de configuración propios (p. ej. comportamiento del gatillo)
+        ajustes.value.comandosConectar.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
+            .forEach { driver?.enviarComando(it) }
         sucio = true
     }
 
@@ -236,22 +317,21 @@ object Engine {
         }
     }
 
-    private fun onTag(epc: String, rssi: Int?) = registrarLectura(epc, rssi, "vivo")
-
-    private fun onBateria(porcentaje: Int) {
-        bateria.value = porcentaje.coerceIn(0, 100)
-    }
-
-    private fun onInfo(clave: String, valor: String) {
-        info.value = info.value.filter { it.first != clave } + (clave to valor)
-    }
-
-    private fun onLinea(linea: String, saliente: Boolean) = log((if (saliente) "→ " else "← ") + linea)
-
     private fun onError(mensaje: String) {
         leyendo.value = false
         log("! $mensaje")
         conexion.value = conexion.value.copy(mensaje = mensaje)
+    }
+
+    private fun onCodigoBarras(codigo: String) {
+        val c = codigo.trim()
+        val v = Vinculo.desde(c)
+        if (v != null) {
+            vinculoPendiente.value = v
+            return
+        }
+        val dorsal = c.filter { it.isLetterOrDigit() }
+        if (dorsal.isNotEmpty() && dorsal.length <= 10) registrarManual(dorsal, "barras")
     }
 
     // ───────────────────────── Pasadas ─────────────────────────
@@ -259,7 +339,7 @@ object Engine {
     fun ahoraCorregido(): Long = System.currentTimeMillis() + (desfaseReloj ?: 0L)
 
     @Synchronized
-    fun registrarLectura(epcCrudo: String, rssi: Int?, origen: String) {
+    fun registrarLectura(epcCrudo: String, rssi: Int?) {
         val epc = epcCrudo.trim().uppercase()
         if (epc.isEmpty()) return
         val a = ajustes.value
@@ -279,17 +359,55 @@ object Engine {
             db.guardar(p)
         } else {
             if (p != null) cerrar(p)
+            val chip = decodificar(epc)
+            val i = buscarInscrito(epc, chip)
             val n = Pasada(
-                id = UUID.randomUUID().toString(), epc = epc, chip = decodificar(epc),
+                id = UUID.randomUUID().toString(), evento = a.eventoId, epc = epc, chip = chip,
+                dorsal = i?.dorsal, nombre = i?.nombre, categoria = i?.categoria,
                 punto = a.nombrePunto, modo = a.modo, dispositivo = a.dispositivo,
                 primera = t, ultima = t, mejorTs = t, rssi = rssi, lecturas = 1, hora = t,
-                cerrada = false, enviado = false, origen = origen, sincronizado = desfaseReloj != null,
+                cerrada = false, enviado = false, origen = "vivo", sincronizado = desfaseReloj != null,
             )
             abiertas[epc] = n
             db.guardar(n)
-            if (a.sonido) pitar()
+            val desconocido = i == null && inscritos.isNotEmpty()
+            avisar(
+                if (desconocido) TipoAviso.DESCONOCIDO else TipoAviso.CONOCIDO,
+                if (i != null) i.dorsal else chip,
+                when {
+                    i != null -> listOf(i.nombre, i.categoria).filter { it.isNotBlank() }.joinToString(" · ")
+                    desconocido -> "Chip no inscrito"
+                    else -> ""
+                }
+            )
         }
         sucio = true
+    }
+
+    /** Dorsal ingresado a mano o leído con el escáner de códigos: queda como pasada cerrada al instante. */
+    @Synchronized
+    fun registrarManual(dorsalCrudo: String, origen: String = "manual"): Boolean {
+        val dorsal = dorsalCrudo.trim()
+        if (dorsal.isEmpty()) return false
+        val a = ajustes.value
+        val t = ahoraCorregido()
+        val i = porDorsal[dorsal]
+        val p = Pasada(
+            id = UUID.randomUUID().toString(), evento = a.eventoId,
+            epc = i?.epc?.uppercase() ?: "", chip = i?.chip ?: dorsal,
+            dorsal = dorsal, nombre = i?.nombre, categoria = i?.categoria,
+            punto = a.nombrePunto, modo = a.modo, dispositivo = a.dispositivo,
+            primera = t, ultima = t, mejorTs = t, rssi = null, lecturas = 1, hora = t,
+            cerrada = true, enviado = false, origen = origen, sincronizado = desfaseReloj != null,
+        )
+        db.guardar(p)
+        avisar(
+            TipoAviso.MANUAL, dorsal,
+            (if (origen == "barras") "Código de barras" else "Manual") +
+                (i?.let { " · " + it.nombre } ?: if (inscritos.isNotEmpty()) " · dorsal no inscrito" else "")
+        )
+        sucio = true
+        return i != null || inscritos.isEmpty()
     }
 
     private fun horaSegunRegla(p: Pasada): Long {
@@ -311,17 +429,18 @@ object Engine {
         abiertas.remove(p.epc)
     }
 
-    /** Cierra a mano todas las pasadas abiertas (p. ej. al terminar la salida). */
+    /** Cierra a mano todas las pasadas abiertas (p. ej. al dar la salida). */
     @Synchronized
     fun cerrarTodas() {
         for (p in abiertas.values.toList()) cerrar(p)
         sucio = true
     }
 
-    fun borrarTodo() {
+    fun borrarEventoActual() {
         synchronized(this) {
-            abiertas.clear()
-            db.borrarTodo()
+            val ev = ajustes.value.eventoId
+            abiertas.values.filter { it.evento == ev }.map { it.epc }.forEach { abiertas.remove(it) }
+            db.borrarEvento(ev)
         }
         sucio = true
     }
@@ -354,8 +473,55 @@ object Engine {
 
     private fun refrescar() {
         sucio = false
-        recientes.value = db.recientes(300)
-        stats.value = db.estadisticas()
+        val ev = ajustes.value.eventoId
+        recientes.value = db.recientes(ev, 300)
+        val s = db.estadisticas(ev)
+        stats.value = s.copy(pendientes = db.pendientesTotales())
+        val leidos = db.dorsalesLeidos(ev)
+        val l = inscritos
+        control.value = Control(
+            total = l.size,
+            pasaron = l.count { it.dorsal in leidos },
+            faltan = l.filter { it.dorsal !in leidos }.sortedWith(compareBy({ it.dorsal.length }, { it.dorsal })),
+            desconocidos = if (l.isEmpty()) 0 else db.chipsDesconocidos(ev),
+        )
+    }
+
+    // ───────────────────────── Avisos ─────────────────────────
+
+    private fun avisar(tipo: TipoAviso, titulo: String, detalle: String) {
+        aviso.value = Aviso(tipo, System.currentTimeMillis(), titulo, detalle)
+        val a = ajustes.value
+        if (a.sonido) pitar(tipo)
+        if (a.vibrar) vibrar(tipo)
+    }
+
+    private fun pitar(tipo: TipoAviso) {
+        try {
+            if (tono == null) tono = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90)
+            when (tipo) {
+                TipoAviso.DESCONOCIDO -> tono?.startTone(ToneGenerator.TONE_PROP_NACK, 250)
+                TipoAviso.MANUAL -> tono?.startTone(ToneGenerator.TONE_PROP_ACK, 120)
+                TipoAviso.CONOCIDO -> tono?.startTone(ToneGenerator.TONE_PROP_BEEP, 70)
+            }
+        } catch (_: RuntimeException) { }
+    }
+
+    private fun vibrar(tipo: TipoAviso) {
+        try {
+            val v: Vibrator = if (Build.VERSION.SDK_INT >= 31) {
+                app.getSystemService(VibratorManager::class.java).defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                app.getSystemService(Vibrator::class.java)
+            }
+            val efecto = if (tipo == TipoAviso.DESCONOCIDO) {
+                VibrationEffect.createWaveform(longArrayOf(0, 120, 80, 120, 80, 120), -1)
+            } else {
+                VibrationEffect.createOneShot(60, VibrationEffect.DEFAULT_AMPLITUDE)
+            }
+            v.vibrate(efecto)
+        } catch (_: Exception) { }
     }
 
     // ───────────────────────── Utilidades ─────────────────────────
@@ -363,13 +529,6 @@ object Engine {
     fun log(s: String) {
         val l = consola.value
         consola.value = (if (l.size > 300) l.takeLast(250) else l) + s
-    }
-
-    private fun pitar() {
-        try {
-            if (tono == null) tono = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90)
-            tono?.startTone(ToneGenerator.TONE_PROP_BEEP, 70)
-        } catch (_: RuntimeException) { }
     }
 
     private fun crearCanal() {

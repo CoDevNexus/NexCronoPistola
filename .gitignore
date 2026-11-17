@@ -4,3 +4,11 @@ app/build/
 local.properties
 .idea/
 *.iml
+
+# Datos del servidor de actualizaciones (solo existen en el hosting)
+servidor-actualizaciones/datos/*.json
+servidor-actualizaciones/datos/*.log
+servidor-actualizaciones/datos/apks/*.apk
+# Llaves de firma: NUNCA al repositorio
+*.jks
+*.keystore

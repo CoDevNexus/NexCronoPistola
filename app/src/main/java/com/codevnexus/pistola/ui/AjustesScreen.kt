@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
@@ -48,8 +49,8 @@ import com.codevnexus.pistola.core.Actualizador
 import com.codevnexus.pistola.core.ChipDecoder
 import com.codevnexus.pistola.core.ChipModo
 import com.codevnexus.pistola.core.Engine
-import com.codevnexus.pistola.core.Evento
 import com.codevnexus.pistola.core.Exportador
+import com.codevnexus.pistola.core.Licencia
 import com.codevnexus.pistola.core.Modo
 import com.codevnexus.pistola.core.Regla
 import com.codevnexus.pistola.core.Uploader
@@ -70,6 +71,12 @@ fun AjustesScreen() {
     val tablaTam by Engine.tablaTam.collectAsState()
     val inscritosTam by Engine.inscritosTam.collectAsState()
     val servidor by Engine.servidor.collectAsState()
+    val licencia by Licencia.estado.collectAsState()
+    val codigoTel = remember { Licencia.codigoTelefono(ctx) }
+    var verBitacora by remember { mutableStateOf(false) }
+    val bitacora by androidx.compose.runtime.produceState(emptyList<com.codevnexus.pistola.core.RegistroBitacora>(), verBitacora, servidor) {
+        value = if (verBitacora) withContext(Dispatchers.IO) { Engine.bitacora(60) } else emptyList()
+    }
 
     var a by remember(guardado) { mutableStateOf(guardado) }
     var digitosTxt by remember(guardado) { mutableStateOf(guardado.chipDigitos.toString()) }
@@ -82,8 +89,6 @@ fun AjustesScreen() {
     var confirmarDesvincular by remember { mutableStateOf(false) }
     var trabajando by remember { mutableStateOf(false) }
     var codigoManual by remember { mutableStateOf("") }
-    var listaEventos by remember { mutableStateOf<List<Evento>?>(null) }
-    var nuevoEvento by remember { mutableStateOf<String?>(null) }
 
     val cambios = a != guardado ||
         digitosTxt != guardado.chipDigitos.toString() || ventanaTxt != guardado.ventanaSeg.toString() ||
@@ -126,6 +131,21 @@ fun AjustesScreen() {
             } catch (e: Exception) {
                 mensaje = e.message ?: "No se pudo exportar"
             }
+        }
+    }
+
+    val abrirLicencia = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            val r = withContext(Dispatchers.IO) {
+                try {
+                    val texto = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?.takeIf { it.size < 20_000 }?.toString(Charsets.UTF_8) ?: throw Exception("archivo vacío o demasiado grande")
+                    Licencia.describir(Licencia.cargar(ctx, texto))
+                } catch (e: Exception) {
+                    "No se pudo leer la licencia: ${e.message}"
+                }
+            }
+            mensaje = r
         }
     }
 
@@ -185,52 +205,16 @@ fun AjustesScreen() {
             dismissButton = { TextButton(onClick = { confirmarDesvincular = false }) { Text("Cancelar") } },
         )
     }
-    listaEventos?.let { lista ->
-        AlertDialog(
-            onDismissRequest = { listaEventos = null },
-            title = { Text("Eventos en NexCrono") },
-            text = {
-                Column {
-                    if (lista.isEmpty()) Text("NexCrono no tiene eventos disponibles.")
-                    lista.forEach { e ->
-                        Column(
-                            Modifier.fillMaxWidth().clickable {
-                                listaEventos = null
-                                Engine.cambiarEvento(e)
-                                enFondo { Uploader.descargarInscritos() }
-                            }.padding(vertical = 10.dp)
-                        ) {
-                            Text(e.nombre, fontWeight = FontWeight.Bold)
-                            if (e.fecha.isNotBlank()) Text(e.fecha, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { listaEventos = null }) { Text("Cerrar") } },
-        )
-    }
-    nuevoEvento?.let { nombre ->
-        AlertDialog(
-            onDismissRequest = { nuevoEvento = null },
-            title = { Text("Nuevo evento local") },
-            text = {
-                OutlinedTextField(
-                    value = nombre, onValueChange = { nuevoEvento = it.take(60) },
-                    label = { Text("Nombre") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { Engine.nuevoEventoLocal(nombre); nuevoEvento = null }) { Text("Crear") }
-            },
-            dismissButton = { TextButton(onClick = { nuevoEvento = null }) { Text("Cancelar") } },
-        )
-    }
-
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { Spacer(Modifier.height(4.dp)) }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                Text("Ajustes", fontSize = 26.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+                BotonInfo("Ajustes")
+            }
+        }
 
         // ── NexCrono ──
         item {
@@ -299,37 +283,61 @@ fun AjustesScreen() {
             }
         }
 
-        // ── Evento ──
+        // ── Licencia ──
         item {
             Tarjeta {
-                Titulo("Evento")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Titulo("Licencia")
+                    Spacer(Modifier.weight(1f))
+                    BotonInfo("Licencia")
+                }
+                val ok = licencia is Licencia.Estado.Valida || licencia is Licencia.Estado.SinControl
+                Text(Licencia.describir(licencia), fontWeight = FontWeight.Bold, color = if (ok) Turquesa else Amarillo)
+                if (!ok) {
+                    Text(
+                        "Modo demostración: hasta ${Licencia.DEMO_PASADAS} pasadas por evento.",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("Código de este teléfono", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(codigoTel, fontFamily = FontFamily.Monospace, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
+                    OutlinedButton(onClick = {
+                        val cm = ctx.getSystemService(android.content.ClipboardManager::class.java)
+                        cm?.setPrimaryClip(android.content.ClipData.newPlainText("Código NexCrono", codigoTel))
+                        mensaje = "Código copiado"
+                    }, modifier = Modifier.weight(1f)) { Text("Copiar") }
+                    OutlinedButton(onClick = {
+                        val i = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(
+                            Intent.EXTRA_TEXT,
+                            "Solicitud de licencia NexCrono Pistola\nCódigo del teléfono: $codigoTel\nEquipo: ${guardado.dispositivo}",
+                        )
+                        ctx.startActivity(Intent.createChooser(i, "Enviar código"))
+                    }, modifier = Modifier.weight(1f)) { Text("Enviar") }
+                }
+                Button(
+                    onClick = { abrirLicencia.launch(arrayOf("*/*")) },
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                ) { Text("Cargar licencia (.lic)") }
+                if (licencia is Licencia.Estado.Valida) {
+                    val d = (licencia as Licencia.Estado.Valida).datos
+                    Text("Plan ${d.plan} · emitida ${d.emitida} · ID ${d.id.take(8)}", fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+                }
+            }
+        }
+
+        // ── Evento actual (la gestión está en la pestaña Eventos) ──
+        item {
+            Tarjeta {
+                Titulo("Evento actual")
                 Text(guardado.eventoNombre, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 Text(
-                    (if (guardado.eventoLocal) "Evento local" else "Evento de NexCrono") + " · $inscritosTam inscritos",
+                    (if (guardado.eventoLocal) "Evento local" else "Evento de NexCrono") + " · $inscritosTam participantes",
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-                    OutlinedButton(
-                        enabled = guardado.vinculado && !trabajando,
-                        onClick = {
-                            trabajando = true
-                            scope.launch {
-                                try {
-                                    listaEventos = withContext(Dispatchers.IO) { Uploader.eventos() }
-                                } catch (e: Exception) {
-                                    mensaje = "No se pudieron traer los eventos: ${e.message}"
-                                }
-                                trabajando = false
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Elegir de NexCrono") }
-                    OutlinedButton(onClick = { nuevoEvento = "" }, modifier = Modifier.weight(1f)) { Text("Nuevo local") }
-                }
-                Text(
-                    "Cada evento guarda sus propias pasadas. Cambiar de evento no borra nada.",
-                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp),
-                )
+                TextButton(onClick = { Navegacion.pestana = 2 }) { Text("Ver y gestionar eventos →") }
             }
         }
 
@@ -545,6 +553,44 @@ fun AjustesScreen() {
                     "Los archivos quedan en Descargas/NexCrono.",
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+
+        // ── Historial de sincronización ──
+        item {
+            Tarjeta {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Titulo("Historial (bitácora)")
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = { verBitacora = !verBitacora }) { Text(if (verBitacora) "Ocultar" else "Ver") }
+                }
+                Text(
+                    "Envíos a NexCrono, descargas de inscritos, hora, licencia, eventos y accesos por WiFi. " +
+                        "Queda guardado en el teléfono.",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (verBitacora) {
+                    val fb = remember { java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US) }
+                    if (bitacora.isEmpty()) Text("Sin registros todavía.", fontSize = 13.sp)
+                    bitacora.forEach { r ->
+                        Row(Modifier.padding(vertical = 3.dp)) {
+                            Text(fb.format(java.util.Date(r.ts)), fontFamily = FontFamily.Monospace, fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(98.dp))
+                            Column {
+                                Text(r.tipo.uppercase(), fontSize = 10.sp, color = Turquesa, fontWeight = FontWeight.Bold)
+                                Text(r.mensaje, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Manual ──
+        item {
+            Tarjeta {
+                Titulo("Ayuda")
+                Button(onClick = { Navegacion.manual = true }, modifier = Modifier.fillMaxWidth()) { Text("Abrir el manual de la aplicación") }
             }
         }
 

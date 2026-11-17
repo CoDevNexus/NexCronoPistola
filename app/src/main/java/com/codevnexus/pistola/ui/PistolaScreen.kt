@@ -187,7 +187,12 @@ fun PistolaScreen() {
         Modifier.fillMaxSize().padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { Spacer(Modifier.height(4.dp)) }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                Text("Pistola", fontSize = 26.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+                BotonInfo("Pistola")
+            }
+        }
 
         // ── Pistola conectada ──
         item {
@@ -515,8 +520,8 @@ fun PistolaScreen() {
                         ) { Text("2. Grabar $numeroChip") }
                     }
                     Text(
-                        "El número queda al final del EPC con ceros a la izquierda (ej. …000001234), así la app lo " +
-                            "muestra con la opción «Últimos dígitos». Los chips con contraseña o bloqueados no se pueden grabar.",
+                        "El número se graba en el mismo formato que usa la app para leer (Ajustes → Número de chip). " +
+                            "Con TimingSense pon el prefijo 00D6 para chips nuevos. Los chips con contraseña o bloqueados no se pueden grabar.",
                         fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp),
                     )
                 }

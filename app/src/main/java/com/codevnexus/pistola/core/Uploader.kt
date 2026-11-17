@@ -24,6 +24,7 @@ object Uploader {
     private const val P = "/api/pistola"
     private var ultimoIntentoHora = 0L
     private var ultimaDescargaInscritos = 0L
+    private var ultimoError: String? = null
     private val iso = object : ThreadLocal<SimpleDateFormat>() {
         override fun initialValue() = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US)
     }
@@ -88,6 +89,7 @@ object Uploader {
         if (evId != null) {
             Engine.cambiarEvento(Evento(evId, evNombre ?: evId, ev?.optString("fecha") ?: "", false))
         }
+        Engine.db.anotar("vinculo", "Vinculado con ${v.url}")
         val hora = sincronizarHora()
         val ins = if (evId != null) try { descargarInscritos() } catch (e: Exception) { "Inscritos: ${e.message}" } else ""
         return listOf("Teléfono vinculado con ${a.empresa.ifBlank { "NexCrono" }}", hora, ins)
@@ -95,6 +97,7 @@ object Uploader {
     }
 
     fun desvincular() {
+        Engine.db.anotar("vinculo", "Desvinculado de NexCrono")
         Engine.guardarAjustes(Engine.ajustes.value.copy(token = "", empresa = ""))
         Engine.desfaseReloj = null
     }
@@ -113,13 +116,15 @@ object Uploader {
             if (codigo !in 200..299) throw Exception("NexCrono respondió $codigo")
             val servidorMs = cuerpo.trim().toLongOrNull() ?: JSONObject(cuerpo).getLong("epochMs")
             val desfase = servidorMs - (t0 + t1) / 2
-            Engine.desfaseReloj = desfase
+            Engine.guardarDesfase(desfase)
             val msg = "Hora sincronizada (diferencia $desfase ms, red ${t1 - t0} ms)"
+            Engine.db.anotar("hora", msg)
             Engine.servidor.value = Engine.servidor.value.copy(mensaje = msg, ok = true, desfaseMs = desfase)
             msg
         } catch (e: Exception) {
             val msg = "Sin sincronizar hora: ${e.message ?: e.javaClass.simpleName}"
             Engine.servidor.value = Engine.servidor.value.copy(mensaje = msg, ok = false)
+            Engine.db.anotar("hora", msg)
             msg
         }
     }
@@ -160,6 +165,8 @@ object Uploader {
         }
         Engine.guardarInscritos(ev, lista)
         ultimaDescargaInscritos = System.currentTimeMillis()
+        Engine.db.ponerEstado("inscritos:$ev", "nexcrono|$ultimaDescargaInscritos")
+        Engine.db.anotar("inscritos", "Descargados ${lista.size} inscritos de NexCrono")
         return "Inscritos actualizados: ${lista.size}"
     }
 
@@ -184,8 +191,10 @@ object Uploader {
                     for (p in lote) put(JSONObject().apply {
                         put("id", p.id)
                         put("evento", p.evento)
+                        val chip = Exportador.chipConvertido(p)
                         put("dorsal", p.dorsal ?: JSONObject.NULL)
-                        put("chip", p.chip)
+                        put("numero", p.dorsal ?: chip)
+                        put("chip", chip)
                         put("epc", p.epc)
                         put("punto", p.punto)
                         put("modo", p.modo)
@@ -209,11 +218,16 @@ object Uploader {
                 Engine.marcarSucio()
             } catch (e: Exception) {
                 val msg = "No se pudo enviar: ${e.message ?: e.javaClass.simpleName}"
+                Engine.db.marcarError(lote.map { it.id }, msg)
+                if (msg != ultimoError) Engine.db.anotar("envio", msg)
+                ultimoError = msg
                 Engine.servidor.value = Engine.servidor.value.copy(mensaje = msg, ok = false)
                 return msg
             }
         }
         if (total > 0) {
+            ultimoError = null
+            Engine.db.anotar("envio", "Enviadas $total pasadas a NexCrono")
             Engine.servidor.value = Engine.servidor.value.copy(
                 mensaje = "Enviadas $total pasadas", ok = true, ultimoEnvio = System.currentTimeMillis()
             )

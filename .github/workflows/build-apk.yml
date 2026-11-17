@@ -41,6 +41,7 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           NEXCRONO_UPDATE_URL: ${{ secrets.NEXCRONO_UPDATE_URL }}
+          NEXCRONO_LICENSE_KEY: ${{ secrets.NEXCRONO_LICENSE_KEY }}
         run: gradle $TAREA --no-daemon --stacktrace
 
       - name: Calcular SHA-256

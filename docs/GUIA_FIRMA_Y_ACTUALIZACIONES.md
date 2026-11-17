@@ -42,10 +42,11 @@ En el repositorio `CoDevNexus/NexCronoPistola` → **Settings → Secrets and va
 | `KEY_ALIAS` | `codevnexus` |
 | `KEY_PASSWORD` | La misma contraseña |
 | `NEXCRONO_UPDATE_URL` | *(déjalo para después, paso 3)* |
+| `NEXCRONO_LICENSE_KEY` | La clave pública de licencias (ver *Manual → Licencia → Emitir licencias*). Sin ella, la app no controla la licencia |
 
 Desde la siguiente compilación, en **Actions** el artefacto trae `app-release.apk` (firmado) y `apk.sha256`.
 
-> **Solo esta vez:** el APK de prueba (1.0) y el firmado (1.1) tienen firmas distintas, así que hay que **desinstalar la 1.0** antes de instalar la 1.1. Exporta antes un respaldo desde *Ajustes → Exportar Excel* si tienes lecturas que quieras guardar. De ahí en adelante todas las actualizaciones se instalan encima, sin perder datos.
+> **Solo la primera vez:** el APK de prueba (debug) y el firmado (release) tienen firmas distintas, así que hay que **desinstalar el de prueba** antes de instalar el firmado. Exporta antes tus eventos (*Eventos → Compartir*) si tienes lecturas que quieras guardar. Una licencia ya cargada se vuelve a cargar, porque el código del teléfono no cambia. De ahí en adelante todas las actualizaciones se instalan encima, sin perder datos.
 
 ---
 
@@ -74,7 +75,7 @@ Entra a `https://updates.codevnexus.tech/`. Pon la **clave de instalación**, un
 3. **Instala ese APK a mano** en los teléfonos. Es la primera versión que sabe dónde buscar actualizaciones.
 
 ### 3.5 Publicar una actualización (cada vez)
-1. En `app/build.gradle` sube `versionCode`, por ejemplo de 2 a 3, y `versionName`, por ejemplo de `"1.1.0"` a `"1.2.0"`. Haz commit y push.
+1. En `app/build.gradle` sube `versionCode`, por ejemplo de 6 a 7, y `versionName`, por ejemplo de `"1.4.0"` a `"1.4.1"`. Haz commit y push.
 2. Descarga de **Actions** el `app-release.apk`.
 3. En el panel → **Publicar versión**: elige la app y pon el mismo `versionCode` y `versionName`, las notas y el archivo.
 4. Al abrir la app, los teléfonos ven «Nueva versión» → **Actualizar**:

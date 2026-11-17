@@ -17,7 +17,15 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -108,5 +116,24 @@ fun Cifra(valor: String, etiqueta: String, color: Color, modifier: Modifier = Mo
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Text(valor, fontSize = 26.sp, fontWeight = FontWeight.Black, color = color)
         Text(etiqueta, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** Estado de navegación compartido por toda la app. */
+object Navegacion {
+    var pestana by mutableIntStateOf(0)
+    var manual by mutableStateOf(false)
+    /** Sección del manual a la que saltar al abrirlo (título «## …»), o null. */
+    var seccionManual by mutableStateOf<String?>(null)
+}
+
+/** Botón «i»: abre el manual de la aplicación (opcionalmente en una sección). */
+@Composable
+fun BotonInfo(seccion: String? = null) {
+    IconButton(onClick = {
+        Navegacion.seccionManual = seccion
+        Navegacion.manual = true
+    }) {
+        Icon(Icons.Filled.Info, contentDescription = "Manual", tint = MaterialTheme.colorScheme.primary)
     }
 }

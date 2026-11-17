@@ -12,3 +12,7 @@ servidor-actualizaciones/datos/apks/*.apk
 # Llaves de firma: NUNCA al repositorio
 *.jks
 *.keystore
+# Clave privada de licencias y licencias emitidas
+herramientas/codevnexus-licencias.key
+herramientas/clave-publica.txt
+*.lic

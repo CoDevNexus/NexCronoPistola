@@ -5,37 +5,126 @@ import android.content.Context
 import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Respaldo en CSV o Excel dentro de Descargas. */
+/**
+ * Archivos de un evento: pasadas (CSV / Excel) y participantes con su estado.
+ * Los usan «Exportar», «Compartir» y el servidor WiFi.
+ * El número de chip va SIEMPRE ya convertido con la configuración actual de «Número de chip».
+ */
 object Exportador {
 
     const val MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     const val MIME_CSV = "text/csv"
 
     private val encabezados = arrayOf(
-        "Dorsal", "Nombre", "Categoría", "Chip", "EPC", "Hora", "Primera lectura", "Última lectura", "RSSI (dBm)", "Lecturas",
-        "Punto", "Modo", "Dispositivo", "Origen", "Hora sincronizada", "Enviado", "Evento", "ID"
+        "Número", "Dorsal", "Nombre", "Categoría", "Número de chip", "EPC", "Hora", "Primera lectura",
+        "Última lectura", "RSSI (dBm)", "Lecturas", "Punto", "Modo", "Dispositivo", "Origen",
+        "Hora sincronizada", "Enviado", "Evento", "ID",
     )
 
-    private fun fila(p: Pasada, f: SimpleDateFormat): Array<Any?> = arrayOf(
-        p.dorsal ?: "", p.nombre ?: "", p.categoria ?: "", p.chip, p.epc, f.format(Date(p.hora)), f.format(Date(p.primera)), f.format(Date(p.ultima)),
-        p.rssi, p.lecturas, p.punto, p.modo, p.dispositivo, p.origen,
-        if (p.sincronizado) "SI" else "NO", if (p.enviado) "SI" else "NO", Engine.ajustes.value.eventoNombre, p.id
+    /** Número de chip convertido con la configuración actual (las pasadas manuales guardan el suyo). */
+    fun chipConvertido(p: Pasada): String =
+        if (p.epc.isNotBlank() && (p.origen == "vivo" || p.origen == "memoria")) Engine.decodificar(p.epc) else p.chip
+
+    private fun fmt() = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+
+    private fun filasPasadas(evento: Evento): List<Array<Any?>> {
+        val f = fmt()
+        return Engine.db.todas(evento.id).map { p ->
+            val chip = chipConvertido(p)
+            arrayOf(
+                p.dorsal ?: chip, p.dorsal ?: "", p.nombre ?: "", p.categoria ?: "", chip, p.epc,
+                f.format(Date(p.hora)), f.format(Date(p.primera)), f.format(Date(p.ultima)),
+                p.rssi, p.lecturas, p.punto, p.modo, p.dispositivo, p.origen,
+                if (p.sincronizado) "SI" else "NO", if (p.enviado) "SI" else "NO", evento.nombre, p.id,
+            )
+        }
+    }
+
+    private val encabezadosParticipantes = arrayOf(
+        "Dorsal", "Nombre", "Categoría", "Número de chip", "EPC", "Estado", "Hora", "Origen", "Extra",
     )
 
-    /** @return Uri del archivo creado en Descargas */
+    private fun filasParticipantes(evento: Evento): List<Array<Any?>> {
+        val f = fmt()
+        val pasaron = Engine.db.primeraPorDorsal(evento.id)
+        val filas = Engine.db.inscritos(evento.id)
+            .sortedWith(compareBy({ it.dorsal.length }, { it.dorsal }))
+            .map { i ->
+                val p = pasaron[i.dorsal]
+                arrayOf<Any?>(
+                    i.dorsal, i.nombre, i.categoria, i.chip, i.epc,
+                    if (p != null) "DETECTADO" else "NO DETECTADO",
+                    p?.let { f.format(Date(it.first)) } ?: "", p?.second ?: "", i.extra,
+                )
+            }.toMutableList()
+        // chips leídos que no están inscritos
+        for (p in Engine.db.noInscritos(evento.id)) {
+            filas += arrayOf<Any?>("", "", "", chipConvertido(p), p.epc, "NO INSCRITO", f.format(Date(p.hora)), p.origen, "")
+        }
+        return filas
+    }
+
+    private fun csv(encabezados: Array<String>, filas: List<Array<Any?>>): ByteArray {
+        val sb = StringBuilder()
+        sb.append(encabezados.joinToString(",") { celda(it) }).append("\r\n")
+        for (f in filas) sb.append(f.joinToString(",") { celda(it) }).append("\r\n")
+        val out = ByteArrayOutputStream()
+        out.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))   // BOM: Excel abre bien las tildes
+        out.write(sb.toString().toByteArray(Charsets.UTF_8))
+        return out.toByteArray()
+    }
+
+    private fun celda(v: Any?): String {
+        val s = v?.toString() ?: ""
+        // texto que Excel tomaría por fórmula
+        val seguro = if (s.isNotEmpty() && s[0] in "=+-@" && s.toDoubleOrNull() == null) "'$s" else s
+        return if (seguro.any { it == ',' || it == '"' || it == '\n' || it == '\r' }) "\"" + seguro.replace("\"", "\"\"") + "\"" else seguro
+    }
+
+    private fun xlsx(hoja: String, encabezados: Array<String>, filas: List<Array<Any?>>): ByteArray {
+        val out = ByteArrayOutputStream()
+        XlsxWriter.write(out, hoja, encabezados, filas)
+        return out.toByteArray()
+    }
+
+    // ───────────── Contenido en memoria (servidor WiFi y archivos) ─────────────
+
+    fun pasadasCsv(e: Evento) = csv(encabezados, filasPasadas(e))
+    fun pasadasXlsx(e: Evento) = xlsx("Pasadas", encabezados, filasPasadas(e))
+    fun participantesCsv(e: Evento) = csv(encabezadosParticipantes, filasParticipantes(e))
+    fun participantesXlsx(e: Evento) = xlsx("Participantes", encabezadosParticipantes, filasParticipantes(e))
+
+    fun nombreArchivo(e: Evento, tipo: String, ext: String): String {
+        val limpio = e.nombre.replace(Regex("[^A-Za-z0-9_-]+"), "_").trim('_').take(40).ifEmpty { "evento" }
+        return "${tipo}_${limpio}_" + SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date()) + ".$ext"
+    }
+
+    // ───────────── Guardar en Descargas ─────────────
+
+    /** Evento actual. @return Uri del archivo creado en Descargas/NexCrono */
     fun exportar(ctx: Context, excel: Boolean): Uri {
-        val datos = Engine.db.todas(Engine.ajustes.value.eventoId)
-        if (datos.isEmpty()) throw IOException("No hay pasadas para exportar")
-        val f = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
-        val punto = Engine.ajustes.value.nombrePunto.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        val nombre = "pistola_${punto}_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) +
-            if (excel) ".xlsx" else ".csv"
+        val e = Engine.eventoActual() ?: throw IOException("No hay evento actual")
+        return exportarEvento(ctx, e, excel, participantes = false)
+    }
 
+    fun exportarEvento(ctx: Context, e: Evento, excel: Boolean, participantes: Boolean): Uri {
+        val datos = when {
+            participantes && excel -> participantesXlsx(e)
+            participantes -> participantesCsv(e)
+            excel -> pasadasXlsx(e)
+            else -> pasadasCsv(e)
+        }
+        if (!participantes && Engine.db.estadisticas(e.id).pasadas == 0) throw IOException("El evento no tiene pasadas")
+        if (participantes && Engine.db.inscritos(e.id).isEmpty() && Engine.db.noInscritos(e.id).isEmpty()) {
+            throw IOException("El evento no tiene participantes cargados")
+        }
+        val nombre = nombreArchivo(e, if (participantes) "participantes" else "pasadas", if (excel) "xlsx" else "csv")
         val cv = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, nombre)
             put(MediaStore.MediaColumns.MIME_TYPE, if (excel) MIME_XLSX else MIME_CSV)
@@ -45,24 +134,9 @@ object Exportador {
             ?: throw IOException("No se pudo crear el archivo")
         ctx.contentResolver.openOutputStream(uri).use { os ->
             if (os == null) throw IOException("No se pudo escribir el archivo")
-            if (excel) {
-                XlsxWriter.write(os, "Pasadas", encabezados, datos.map { fila(it, f) })
-            } else {
-                val sb = StringBuilder()
-                sb.append(encabezados.joinToString(",")).append("\r\n")
-                for (p in datos) {
-                    sb.append(fila(p, f).joinToString(",") { csv(it) }).append("\r\n")
-                }
-                os.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())) // BOM para Excel
-                os.write(sb.toString().toByteArray(Charsets.UTF_8))
-            }
+            os.write(datos)
         }
         return uri
-    }
-
-    private fun csv(v: Any?): String {
-        val s = v?.toString() ?: ""
-        return if (s.contains(',') || s.contains('"') || s.contains('\n')) "\"" + s.replace("\"", "\"\"") + "\"" else s
     }
 
     /** Lee una tabla EPC → chip desde CSV (separador , ; o tabulador, en cualquier orden de columnas). */

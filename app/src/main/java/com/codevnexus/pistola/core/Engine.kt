@@ -105,6 +105,8 @@ object Engine {
         tabla = db.cargarMapa()
         tablaTam.value = tabla.size
         cargarInscritos()
+        restaurarDesfase()
+        Licencia.verificar(app)
         // pasadas que quedaron abiertas si la app se cerró: se reabren para cerrarlas bien
         for (p in db.abiertas()) abiertas[p.epc] = p
         crearCanal()
@@ -183,11 +185,19 @@ object Engine {
         }
     }
 
+    /** Abre un evento como actual. Si ya existe en el teléfono, conserva su lugar y notas. */
     fun cambiarEvento(e: Evento) {
         cerrarTodas()
-        db.guardarEvento(e)
-        guardarAjustes(ajustes.value.copy(eventoId = e.id, eventoNombre = e.nombre, eventoLocal = e.local))
+        val existente = db.evento(e.id)
+        val final = when {
+            existente == null -> e.also { db.guardarEvento(it) }
+            !e.local && (e.nombre != existente.nombre || (e.fecha.isNotBlank() && e.fecha != existente.fecha)) ->
+                existente.copy(nombre = e.nombre, fecha = e.fecha.ifBlank { existente.fecha }).also { db.guardarEvento(it) }
+            else -> existente
+        }
+        guardarAjustes(ajustes.value.copy(eventoId = final.id, eventoNombre = final.nombre, eventoLocal = final.local))
         cargarInscritos()
+        db.anotar("evento", "Evento abierto: ${final.nombre}")
         sucio = true
     }
 
@@ -200,6 +210,78 @@ object Engine {
     }
 
     fun buscarPorDorsal(dorsal: String): Inscrito? = porDorsal[dorsal.trim()]
+
+    fun eventoActual(): Evento? = db.evento(ajustes.value.eventoId)
+
+    /** Crea o actualiza un evento (nombre, fecha, lugar, notas). */
+    fun guardarEvento(e: Evento) {
+        db.guardarEvento(e)
+        if (e.id == ajustes.value.eventoId) {
+            guardarAjustes(ajustes.value.copy(eventoNombre = e.nombre, eventoLocal = e.local))
+        }
+        db.anotar("evento", "Evento guardado: ${e.nombre}")
+        sucio = true
+    }
+
+    fun crearEventoLocal(nombre: String, fecha: String, lugar: String, notas: String, abrir: Boolean): Evento {
+        val e = Evento(
+            "local-" + UUID.randomUUID().toString().take(8),
+            nombre.ifBlank { Ajustes.nombreEventoLocal() }, fecha.ifBlank { hoy() }, true, lugar, notas,
+        )
+        db.guardarEvento(e)
+        db.anotar("evento", "Evento creado: ${e.nombre}")
+        if (abrir) cambiarEvento(e) else sucio = true
+        return e
+    }
+
+    /** Borra un evento con sus pasadas e inscritos. Si era el actual, abre otro (o crea uno nuevo). */
+    fun borrarEvento(id: String) {
+        val eraActual = id == ajustes.value.eventoId
+        synchronized(this) {
+            if (eraActual) {
+                abiertas.values.filter { it.evento == id }.map { it.epc }.forEach { abiertas.remove(it) }
+            }
+            db.borrarEventoCompleto(id)
+        }
+        db.anotar("evento", "Evento eliminado ($id)")
+        if (eraActual) {
+            val otro = db.eventos().firstOrNull()
+            if (otro != null) cambiarEvento(otro) else nuevoEventoLocal("")
+        }
+        sucio = true
+    }
+
+    /** Participantes cargados desde un archivo (evento local o de NexCrono). */
+    fun cargarParticipantes(lista: List<Inscrito>, reemplazar: Boolean): String {
+        val ev = ajustes.value.eventoId
+        val final = if (reemplazar) lista else {
+            val m = LinkedHashMap<String, Inscrito>()
+            db.inscritos(ev).forEach { m[it.dorsal] = it }
+            lista.forEach { m[it.dorsal] = it }
+            m.values.toList()
+        }
+        guardarInscritos(ev, final)
+        db.ponerEstado("inscritos:$ev", "archivo|" + System.currentTimeMillis())
+        db.anotar("participantes", "Cargados ${lista.size} participantes desde archivo (total ${final.size})")
+        return "Participantes cargados: ${lista.size}. Total en el evento: ${final.size}."
+    }
+
+    /** Guarda el desfase de reloj con NexCrono para usarlo aunque se reinicie la app sin red. */
+    fun guardarDesfase(desfase: Long) {
+        desfaseReloj = desfase
+        db.ponerEstado("hora", "$desfase|" + System.currentTimeMillis())
+    }
+
+    private fun restaurarDesfase() {
+        val v = db.estado("hora") ?: return
+        val partes = v.split('|')
+        val desfase = partes.getOrNull(0)?.toLongOrNull() ?: return
+        val cuando = partes.getOrNull(1)?.toLongOrNull() ?: return
+        // vale 12 horas: lo suficiente para un evento sin red
+        if (System.currentTimeMillis() - cuando < 12 * 3600_000L) desfaseReloj = desfase
+    }
+
+    fun bitacora(limite: Int = 100): List<RegistroBitacora> = db.bitacora(limite)
 
     // ───────────────────────── Conexión ─────────────────────────
 
@@ -313,14 +395,39 @@ object Engine {
         return true
     }
 
-    /** EPC nuevo: prefijo hex + ceros + número, del mismo largo que el EPC actual. */
+    /**
+     * EPC nuevo, del mismo largo que el actual, en el MISMO formato con que la app lee los chips:
+     *  - Segmento (p. ej. TimingSense): el número va en su tramo (hex o decimal); con prefijo, el resto se limpia
+     *    (prefijo + ceros), si no se conserva el resto del EPC actual.
+     *  - Hex → decimal: número en hexadecimal al final.
+     *  - Últimos dígitos / otros: número en decimal al final, con prefijo opcional.
+     */
     fun epcNuevo(actual: String, numero: String, prefijo: String): String? {
+        val a = ajustes.value
+        val largo = actual.length
         val p = prefijo.uppercase().filter { it in "0123456789ABCDEF" }
-        val n = numero.filter(Char::isDigit).trimStart('0').ifEmpty { if (numero.isNotEmpty()) "0" else "" }
-        if (n.isEmpty()) return null
-        val relleno = actual.length - p.length - n.length
-        if (relleno < 0) return null
-        return p + "0".repeat(relleno) + n
+        val n = numero.filter(Char::isDigit).toLongOrNull() ?: return null
+        if (p.length > largo) return null
+        return when (a.chipModo) {
+            ChipModo.SEGMENTO -> {
+                val i = a.segInicio - 1
+                if (i < 0 || i + a.segLargo > largo) return null
+                val valor = (if (a.segHex) n.toString(16).uppercase() else n.toString())
+                if (valor.length > a.segLargo) return null
+                val base = if (p.isNotEmpty()) p + "0".repeat(largo - p.length) else actual.uppercase()
+                base.substring(0, i) + valor.padStart(a.segLargo, '0') + base.substring(i + a.segLargo)
+            }
+            ChipModo.HEX_DEC -> {
+                val v = n.toString(16).uppercase()
+                if (p.length + v.length > largo) return null
+                p + "0".repeat(largo - p.length - v.length) + v
+            }
+            else -> {
+                val v = n.toString()
+                if (p.length + v.length > largo) return null
+                p + "0".repeat(largo - p.length - v.length) + v
+            }
+        }
     }
 
     /** @return null si empezó a grabar, o el motivo por el que no se puede. */
@@ -331,6 +438,10 @@ object Engine {
         val nuevo = epcNuevo(actual, numero, prefijo) ?: return "El número no cabe en el EPC de este chip"
         if (nuevo == actual) return "El chip ya tiene ese número"
         if (!d.grabarEpc(actual, nuevo)) return "La pistola está ocupada o el EPC no es válido"
+        val leido = decodificar(nuevo)
+        if (leido != numero.filter(Char::isDigit).trimStart('0').ifEmpty { "0" }) {
+            return "Con la configuración actual de «Número de chip» ese EPC se leería como $leido. Revisa Ajustes → Número de chip."
+        }
         epcEnGrabacion = nuevo
         grabacion.value = g.copy(ocupado = true, ok = null, mensaje = "Grabando $nuevo…")
         return null
@@ -492,10 +603,22 @@ object Engine {
 
     fun ahoraCorregido(): Long = System.currentTimeMillis() + (desfaseReloj ?: 0L)
 
+    /** Modo demostración: sin licencia válida se limita la cantidad de pasadas por evento. */
+    private fun licenciaPermite(): Boolean {
+        if (Licencia.permiteCaptura(stats.value.pasadas)) return true
+        val ahora = System.currentTimeMillis()
+        val ultimo = aviso.value
+        if (ultimo == null || ultimo.titulo != "LICENCIA" || ahora - ultimo.ts > 5000) {
+            aviso.value = Aviso(TipoAviso.DESCONOCIDO, ahora, "LICENCIA", Licencia.mensajeBloqueo())
+        }
+        return false
+    }
+
     @Synchronized
     fun registrarLectura(epcCrudo: String, rssi: Int?) {
         val epc = epcCrudo.trim().uppercase()
         if (epc.isEmpty()) return
+        if (abiertas[epc] == null && !licenciaPermite()) return
         val a = ajustes.value
         val t = ahoraCorregido()
         ultimaEpc.value = epc
@@ -543,6 +666,7 @@ object Engine {
     fun registrarManual(dorsalCrudo: String, origen: String = "manual"): Boolean {
         val dorsal = dorsalCrudo.trim()
         if (dorsal.isEmpty()) return false
+        if (!licenciaPermite()) return false
         val a = ajustes.value
         val t = ahoraCorregido()
         val i = porDorsal[dorsal]
@@ -619,6 +743,7 @@ object Engine {
             abrir()
         }
         if (tick % 2 == 0L) actualizarNotificacion()
+        if (tick % 300 == 0L) Licencia.verificar(app)   // vencimiento y reloj, cada 5 minutos
     }
 
     fun marcarSucio() {
@@ -631,13 +756,18 @@ object Engine {
         recientes.value = db.recientes(ev, 300)
         val s = db.estadisticas(ev)
         stats.value = s.copy(pendientes = db.pendientesTotales())
-        val leidos = db.dorsalesLeidos(ev)
+        val primeras = db.primeraPorDorsal(ev)
         val l = inscritos
+        val porNumero = compareBy<Inscrito>({ it.dorsal.length }, { it.dorsal })
+        val noInscritos = if (l.isEmpty()) emptyList() else db.noInscritos(ev)
         control.value = Control(
             total = l.size,
-            pasaron = l.count { it.dorsal in leidos },
-            faltan = l.filter { it.dorsal !in leidos }.sortedWith(compareBy({ it.dorsal.length }, { it.dorsal })),
-            desconocidos = if (l.isEmpty()) 0 else db.chipsDesconocidos(ev),
+            pasaron = l.count { it.dorsal in primeras },
+            faltan = l.filter { it.dorsal !in primeras }.sortedWith(porNumero),
+            detectados = l.mapNotNull { i -> primeras[i.dorsal]?.let { Detectado(i, it.first, it.second) } }
+                .sortedBy { it.hora },
+            desconocidos = noInscritos.size,
+            desconocidosLista = noInscritos,
         )
     }
 

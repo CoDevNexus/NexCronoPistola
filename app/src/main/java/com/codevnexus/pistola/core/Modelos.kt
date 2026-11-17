@@ -43,14 +43,40 @@ data class Inscrito(
     val extra: String,
 )
 
-data class Evento(val id: String, val nombre: String, val fecha: String, val local: Boolean)
+data class Evento(
+    val id: String,
+    val nombre: String,
+    val fecha: String,
+    val local: Boolean,
+    val lugar: String = "",
+    val notas: String = "",
+)
+
+/** Evento con sus números, para el historial. */
+data class EventoResumen(
+    val evento: Evento,
+    val pasadas: Int,
+    val chips: Int,
+    val inscritos: Int,
+    val pendientes: Int,
+    val ultima: Long?,
+)
+
+/** Inscrito que ya pasó por el punto, con la hora de su primera pasada. */
+data class Detectado(val inscrito: Inscrito, val hora: Long, val origen: String)
 
 data class Control(
     val total: Int = 0,
     val pasaron: Int = 0,
     val faltan: List<Inscrito> = emptyList(),
+    val detectados: List<Detectado> = emptyList(),
     val desconocidos: Int = 0,
-)
+    val desconocidosLista: List<Pasada> = emptyList(),
+) {
+    val porcentaje: Int get() = if (total == 0) 0 else pasaron * 100 / total
+}
+
+data class RegistroBitacora(val ts: Long, val tipo: String, val mensaje: String)
 
 enum class TipoAviso { CONOCIDO, DESCONOCIDO, MANUAL }
 

@@ -87,7 +87,7 @@ Reglas generales:
 ### 4.1 `POST /api/pistola/vincular` (sin token)
 Petición:
 ```json
-{ "codigo": "K7P2-9QX4", "dispositivoId": "6f1c…-uuid", "dispositivo": "Galaxy A15 meta", "app": "NexCrono Pistola", "version": "1.1.0" }
+{ "codigo": "K7P2-9QX4", "dispositivoId": "6f1c…-uuid", "dispositivo": "Galaxy A15 meta", "app": "NexCrono Pistola", "version": "1.4.0" }
 ```
 Validar:
 - Que el código exista con su hash, no esté usado y no esté vencido. Si no es válido, responder **401**. Si está vencido, **410**.
@@ -138,13 +138,14 @@ Petición, hasta 200 lecturas por envío:
   "dispositivoId": "6f1c…",
   "dispositivo": "Galaxy A15 meta",
   "operador": "Juan",
-  "app": "NexCrono Pistola 1.1.0",
+  "app": "NexCrono Pistola 1.4.0",
   "enviado": "2026-11-22T08:15:02.120-05:00",
   "lecturas": [
     {
       "id": "0d6c2a0e-3b7d-4a51-9a51-1d2b8f0c9e11",
       "evento": "42",
       "dorsal": "1234",
+      "numero": "1234",
       "chip": "1234",
       "epc": "300833B2DDD9014000001234",
       "punto": "PC2",
@@ -167,6 +168,10 @@ Validar:
 - `modo` ∈ {SALIDA, CONTROL}.
 - `origen` ∈ {vivo, manual, barras, memoria}.
 - `horaMs` es un entero razonable: dentro de ±2 días del evento.
+
+Sobre los campos `chip` y `numero`:
+- `chip` llega **ya convertido** con la configuración «Número de chip» del teléfono. Por ejemplo, en TimingSense `00D601BE00000000` → `446`.
+- `numero` es el dorsal si el teléfono lo conoce y, si no, el número de chip.
 - Textos de 64 caracteres como máximo.
 - Como máximo **500 lecturas** y **2 MB** por petición.
 
@@ -213,7 +218,7 @@ Mientras no reciba un 2xx, la app reintenta cada 3 segundos.
 ```bash
 # 1. Vincular (con el código mostrado en el panel)
 curl -X POST http://localhost:8080/api/pistola/vincular -H "Content-Type: application/json" \
-  -d '{"codigo":"K7P2-9QX4","dispositivoId":"11111111-1111-1111-1111-111111111111","dispositivo":"Prueba","app":"NexCrono Pistola","version":"1.1.0"}'
+  -d '{"codigo":"K7P2-9QX4","dispositivoId":"11111111-1111-1111-1111-111111111111","dispositivo":"Prueba","app":"NexCrono Pistola","version":"1.4.0"}'
 
 # 2. Hora
 curl http://localhost:8080/api/pistola/hora -H "Authorization: Bearer TOKEN"

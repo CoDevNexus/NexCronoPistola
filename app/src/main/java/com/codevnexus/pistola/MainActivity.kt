@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
@@ -49,6 +50,9 @@ import com.codevnexus.pistola.core.Uploader
 import com.codevnexus.pistola.core.Vinculo
 import com.codevnexus.pistola.ui.AjustesScreen
 import com.codevnexus.pistola.ui.ControlScreen
+import com.codevnexus.pistola.ui.EventosScreen
+import com.codevnexus.pistola.ui.ManualScreen
+import com.codevnexus.pistola.ui.Navegacion
 import com.codevnexus.pistola.ui.LecturaScreen
 import com.codevnexus.pistola.ui.PistolaScreen
 import com.codevnexus.pistola.ui.PistolaTheme
@@ -196,25 +200,34 @@ fun App() {
         )
     }
 
-    var pestana by rememberSaveable { mutableIntStateOf(0) }
+    if (Navegacion.manual) {
+        ManualScreen(onCerrar = { Navegacion.manual = false })
+        return
+    }
+
+    val pestana = Navegacion.pestana
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
                 NavigationBarItem(
-                    selected = pestana == 0, onClick = { pestana = 0 },
+                    selected = pestana == 0, onClick = { Navegacion.pestana = 0 },
                     icon = { Icon(Icons.Filled.Home, contentDescription = null) }, label = { Text("Lectura") },
                 )
                 NavigationBarItem(
-                    selected = pestana == 1, onClick = { pestana = 1 },
+                    selected = pestana == 1, onClick = { Navegacion.pestana = 1 },
                     icon = { Icon(Icons.Filled.List, contentDescription = null) }, label = { Text("Control") },
                 )
                 NavigationBarItem(
-                    selected = pestana == 2, onClick = { pestana = 2 },
+                    selected = pestana == 2, onClick = { Navegacion.pestana = 2 },
+                    icon = { Icon(Icons.Filled.DateRange, contentDescription = null) }, label = { Text("Eventos") },
+                )
+                NavigationBarItem(
+                    selected = pestana == 3, onClick = { Navegacion.pestana = 3 },
                     icon = { Icon(Icons.Filled.Build, contentDescription = null) }, label = { Text("Pistola") },
                 )
                 NavigationBarItem(
-                    selected = pestana == 3, onClick = { pestana = 3 },
+                    selected = pestana == 4, onClick = { Navegacion.pestana = 4 },
                     icon = { Icon(Icons.Filled.Settings, contentDescription = null) }, label = { Text("Ajustes") },
                 )
             }
@@ -222,9 +235,10 @@ fun App() {
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
             when (pestana) {
-                0 -> LecturaScreen(irAPistola = { pestana = 2 })
+                0 -> LecturaScreen(irAPistola = { Navegacion.pestana = 3 })
                 1 -> ControlScreen()
-                2 -> PistolaScreen()
+                2 -> EventosScreen()
+                3 -> PistolaScreen()
                 else -> AjustesScreen()
             }
         }

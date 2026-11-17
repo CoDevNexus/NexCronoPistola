@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.codevnexus.pistola.core.Engine
 import com.codevnexus.pistola.core.Estado
+import com.codevnexus.pistola.core.Licencia
 import com.codevnexus.pistola.core.Modo
 import com.codevnexus.pistola.core.Pasada
 import com.codevnexus.pistola.core.TipoAviso
@@ -75,6 +76,7 @@ fun LecturaScreen(irAPistola: () -> Unit) {
     val servidor by Engine.servidor.collectAsState()
     val ajustes by Engine.ajustes.collectAsState()
     val aviso by Engine.aviso.collectAsState()
+    val licencia by Licencia.estado.collectAsState()
 
     var manual by remember { mutableStateOf(false) }
 
@@ -148,6 +150,21 @@ fun LecturaScreen(irAPistola: () -> Unit) {
                             fontSize = 12.sp,
                         )
                     }
+                }
+                BotonInfo("Lectura")
+            }
+        }
+
+        // Aviso de licencia
+        if (!(licencia is Licencia.Estado.Valida || licencia is Licencia.Estado.SinControl)) {
+            item {
+                Tarjeta {
+                    Text(Licencia.describir(licencia), fontWeight = FontWeight.Bold, color = Amarillo)
+                    Text(
+                        "Modo demostración: ${stats.pasadas} de ${Licencia.DEMO_PASADAS} pasadas usadas en este evento.",
+                        fontSize = 13.sp,
+                    )
+                    TextButton(onClick = { Navegacion.pestana = 4 }) { Text("Cargar licencia") }
                 }
             }
         }

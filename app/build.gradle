@@ -9,6 +9,10 @@ plugins {
 // o en GitHub como secreto NEXCRONO_UPDATE_URL. Vacía = la app no busca actualizaciones.
 def updateUrl = (project.findProperty('nexcronoUpdateUrl') ?: System.getenv('NEXCRONO_UPDATE_URL') ?: '').toString().trim()
 
+// Clave PÚBLICA de licencias (herramientas/GeneradorLicencias.java → «llaves»).
+// Vacía = compilación de desarrollo, sin control de licencia.
+def licenseKey = (project.findProperty('nexcronoLicenseKey') ?: System.getenv('NEXCRONO_LICENSE_KEY') ?: '').toString().trim()
+
 // Firma de release: se activa solo si existen las variables (secretos de GitHub o tu PC).
 def ksFile = System.getenv('KEYSTORE_FILE')
 def firmaDisponible = ksFile != null && file(ksFile).exists()
@@ -21,9 +25,10 @@ android {
         applicationId "com.codevnexus.pistola"
         minSdk 26
         targetSdk 34
-        versionCode 5
-        versionName "1.3.1"
+        versionCode 6
+        versionName "1.4.0"
         buildConfigField "String", "UPDATE_URL", "\"${updateUrl}\""
+        buildConfigField "String", "LICENSE_PUBLIC_KEY", "\"${licenseKey}\""
     }
 
     signingConfigs {
@@ -67,3 +72,13 @@ dependencies {
     implementation 'androidx.activity:activity-compose:1.9.3'
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
 }
+
+// El manual (docs/MANUAL.md) va dentro de la app como assets/manual.md: una sola fuente para ambos.
+def dirManual = layout.buildDirectory.dir("generated/manual")
+tasks.register('copiarManual', Copy) {
+    from rootProject.file('docs/MANUAL.md')
+    into dirManual
+    rename { 'manual.md' }
+}
+android.sourceSets.main.assets.srcDirs += dirManual.get().asFile
+tasks.named('preBuild') { dependsOn 'copiarManual' }

@@ -83,6 +83,21 @@ fun PistolaScreen() {
     var comando by remember { mutableStateOf("") }
     var potencia by remember { mutableFloatStateOf((ajustes.potencia ?: 29).toFloat()) }
     var comandosIni by remember(ajustes.comandosConectar) { mutableStateOf(ajustes.comandosConectar) }
+    val memoria by Engine.memoria.collectAsState()
+    var confirmarBorrarMemoria by remember { mutableStateOf(false) }
+    val grabacion by Engine.grabacion.collectAsState()
+    var numeroChip by remember { mutableStateOf("1") }
+    var prefijoChip by remember { mutableStateOf("") }
+    var autoIncrementar by remember { mutableStateOf(true) }
+    var ultimoVerificado by remember { mutableStateOf<String?>(null) }
+    // al verificar un chip, avanzar al número siguiente
+    androidx.compose.runtime.LaunchedEffect(grabacion.verificado) {
+        val v = grabacion.verificado
+        if (v != null && v != ultimoVerificado) {
+            ultimoVerificado = v
+            if (autoIncrementar) numeroChip = ((numeroChip.toLongOrNull() ?: 0L) + 1).toString()
+        }
+    }
 
     DisposableEffect(Unit) {
         val receptor = object : BroadcastReceiver() {
@@ -124,6 +139,39 @@ fun PistolaScreen() {
         } catch (e: SecurityException) {
             emptyList()
         }
+    }
+
+    memoria?.let { texto ->
+        val enCurso = texto.endsWith("…")
+        AlertDialog(
+            onDismissRequest = { if (!enCurso) Engine.memoria.value = null },
+            title = { Text("Pistola") },
+            text = {
+                Column {
+                    Text(texto)
+                    if (enCurso) {
+                        Spacer(Modifier.height(12.dp))
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                        Text(
+                            "Si la memoria es grande puede tardar varios minutos. No apagues la pistola.",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { Engine.memoria.value = null }) { Text(if (enCurso) "Ocultar" else "OK") } },
+        )
+    }
+    if (confirmarBorrarMemoria) {
+        AlertDialog(
+            onDismissRequest = { confirmarBorrarMemoria = false },
+            title = { Text("¿Borrar la memoria de la pistola?") },
+            text = { Text("Se borra el registro (LOG.TXT) de la micro SD. Hazlo solo después de importar y enviar las lecturas.") },
+            confirmButton = {
+                TextButton(onClick = { Engine.borrarMemoria(); confirmarBorrarMemoria = false }) { Text("Borrar", color = Rojo) }
+            },
+            dismissButton = { TextButton(onClick = { confirmarBorrarMemoria = false }) { Text("Cancelar") } },
+        )
     }
 
     aviso?.let { texto ->
@@ -194,13 +242,19 @@ fun PistolaScreen() {
                         OutlinedButton(
                             onClick = {
                                 if (!Engine.leerMemoria()) {
-                                    aviso = "La descarga de la memoria / micro SD todavía no está activa para esta pistola. " +
-                                        "Los comandos están en la nota de TSL «Using the Micro SD Log and Autorun Files» " +
-                                        "(requiere login en tsl.com). Mientras tanto puedes probar comandos en la consola de abajo."
+                                    aviso = "Esta pistola no permite descargar su memoria desde la app."
                                 }
                             },
                             modifier = Modifier.weight(1f),
                         ) { Text("Leer memoria / SD") }
+                    }
+                    if (conexion.comandos) {
+                        TextButton(onClick = { confirmarBorrarMemoria = true }) { Text("Borrar memoria de la pistola", color = Rojo) }
+                        Text(
+                            "La memoria guarda lo leído con el gatillo cuando la pistola no estaba conectada " +
+                                "(requiere micro SD). Al leerla, las pasadas se agregan al evento actual.",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
@@ -365,6 +419,110 @@ fun PistolaScreen() {
             }
         }
 
+        // ── Configuración automática de la pistola ──
+        if (conexion.comandos) {
+            item {
+                Tarjeta {
+                    Titulo("Configuración de la pistola")
+                    Interruptor(
+                        "Configurar la pistola al conectar",
+                        "RSSI, fecha/hora en cada lectura, potencia y sincronizar su reloj",
+                        ajustes.configurarPistola,
+                    ) { Engine.guardarAjustes(ajustes.copy(configurarPistola = it)) }
+                    if (ajustes.configurarPistola) {
+                        Interruptor(
+                            "Mantener el gatillo = leer sin parar",
+                            "Una pulsación lee; mantenido repite cada 50 ms",
+                            ajustes.gatilloContinuo,
+                        ) { Engine.guardarAjustes(ajustes.copy(gatilloContinuo = it)) }
+                        Interruptor(
+                            "Pitido de la pistola en cada lectura",
+                            "Apagado: solo pita el teléfono cuando hay un chip nuevo",
+                            ajustes.pitidoPistola,
+                        ) { Engine.guardarAjustes(ajustes.copy(pitidoPistola = it)) }
+                        Text(
+                            "Los cambios se aplican al volver a conectar la pistola.",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        OutlinedButton(
+                            enabled = conexion.estado == Estado.CONECTADO,
+                            onClick = { if (!Engine.grabarAutorun()) aviso = "La pistola no permite grabar su configuración." },
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        ) { Text("Grabar configuración en la pistola (AUTO.TXT)") }
+                        Text(
+                            "Necesario para usar la pistola SIN el teléfono: al dormirse vuelve a sus valores de fábrica " +
+                                "y sin esto las lecturas guardadas en la SD quedan sin hora. Requiere micro SD. " +
+                                "Repítelo si cambias la potencia o el gatillo.",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
+        // ── Grabar número en chips ──
+        if (conexion.comandos && conexion.estado == Estado.CONECTADO) {
+            item {
+                Tarjeta {
+                    Titulo("Grabar número en chips")
+                    Text(
+                        "Escribe el número en el EPC del chip. Deja los demás chips lejos (o en una caja metálica) " +
+                            "y pon solo el que vas a grabar junto a la antena.",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
+                        OutlinedTextField(
+                            value = numeroChip, onValueChange = { numeroChip = it.filter(Char::isDigit).take(12) },
+                            label = { Text("Número") }, singleLine = true, modifier = Modifier.weight(1f),
+                            textStyle = MaterialTheme.typography.titleLarge,
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                            ),
+                        )
+                        OutlinedTextField(
+                            value = prefijoChip,
+                            onValueChange = { prefijoChip = it.uppercase().filter { c -> c in "0123456789ABCDEF" }.take(8) },
+                            label = { Text("Prefijo (opcional)") }, singleLine = true, modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Interruptor("Pasar al número siguiente al grabar", "", autoIncrementar) { autoIncrementar = it }
+                    val actual = grabacion.epcActual
+                    if (actual != null) {
+                        Text("EPC actual", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(actual, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+                        val nuevo = Engine.epcNuevo(actual, numeroChip, prefijoChip)
+                        Text("Se grabará", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(nuevo ?: "— el número no cabe —", fontFamily = FontFamily.Monospace, fontSize = 13.sp,
+                            color = if (nuevo != null) Turquesa else Rojo)
+                    }
+                    if (grabacion.mensaje.isNotEmpty()) {
+                        Text(
+                            grabacion.mensaje, modifier = Modifier.padding(top = 6.dp), fontWeight = FontWeight.Medium,
+                            color = when (grabacion.ok) { true -> Turquesa; false -> Rojo; else -> MaterialTheme.colorScheme.onSurface },
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                        OutlinedButton(
+                            enabled = !grabacion.ocupado,
+                            onClick = { if (!Engine.leerChipCercano()) aviso = "La pistola está ocupada; inténtalo de nuevo." },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("1. Leer chip") }
+                        Button(
+                            enabled = !grabacion.ocupado && actual != null,
+                            onClick = { Engine.grabarChip(numeroChip, prefijoChip)?.let { aviso = it } },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = Naranja),
+                        ) { Text("2. Grabar $numeroChip") }
+                    }
+                    Text(
+                        "El número queda al final del EPC con ceros a la izquierda (ej. …000001234), así la app lo " +
+                            "muestra con la opción «Últimos dígitos». Los chips con contraseña o bloqueados no se pueden grabar.",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+            }
+        }
+
         // ── Comandos al conectar (gatillo, etc.) ──
         if (conexion.comandos) {
             item {
@@ -377,7 +535,7 @@ fun PistolaScreen() {
                     )
                     OutlinedTextField(
                         value = comandosIni, onValueChange = { comandosIni = it },
-                        placeholder = { Text("# comandos del protocolo TSL ASCII 2") },
+                        placeholder = { Text("# ej.: .st -t 300  (apagado tras 5 min sin conexión)") },
                         minLines = 3, modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                         textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
                     )
@@ -423,5 +581,16 @@ fun PistolaScreen() {
             )
         }
         item { Spacer(Modifier.height(16.dp)) }
+    }
+}
+
+@Composable
+private fun Interruptor(titulo: String, detalle: String, valor: Boolean, onCambio: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(titulo, fontWeight = FontWeight.Medium)
+            if (detalle.isNotEmpty()) Text(detalle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = valor, onCheckedChange = onCambio)
     }
 }

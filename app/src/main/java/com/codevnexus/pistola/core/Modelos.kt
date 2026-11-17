@@ -125,6 +125,9 @@ data class Ajustes(
     val eventoNombre: String = "",
     val eventoLocal: Boolean = true,
     val comandosConectar: String = "",
+    val configurarPistola: Boolean = true,
+    val gatilloContinuo: Boolean = true,
+    val pitidoPistola: Boolean = false,
 ) {
     val nombrePunto: String get() = if (modo == Modo.SALIDA) "SALIDA" else punto.ifBlank { "PC" }
     val vinculado: Boolean get() = servidor.isNotBlank() && token.isNotBlank()
@@ -159,6 +162,9 @@ data class Ajustes(
                 eventoNombre = p.getString("eventoNombre", "") ?: "",
                 eventoLocal = p.getBoolean("eventoLocal", true),
                 comandosConectar = p.getString("comandosConectar", "") ?: "",
+                configurarPistola = p.getBoolean("configurarPistola", true),
+                gatilloContinuo = p.getBoolean("gatilloContinuo", true),
+                pitidoPistola = p.getBoolean("pitidoPistola", false),
             )
             if (a.dispositivoId.isBlank()) {
                 a = a.copy(dispositivoId = UUID.randomUUID().toString())
@@ -191,6 +197,9 @@ data class Ajustes(
                 .putString("eventoNombre", a.eventoNombre)
                 .putBoolean("eventoLocal", a.eventoLocal)
                 .putString("comandosConectar", a.comandosConectar)
+                .putBoolean("configurarPistola", a.configurarPistola)
+                .putBoolean("gatilloContinuo", a.gatilloContinuo)
+                .putBoolean("pitidoPistola", a.pitidoPistola)
                 .apply()
         }
 
@@ -247,3 +256,13 @@ data class Vinculo(
         }
     }
 }
+
+/** Estado de la herramienta «Grabar número en chips». */
+data class Grabacion(
+    val ocupado: Boolean = false,
+    val epcActual: String? = null,
+    val rssi: Int? = null,
+    val mensaje: String = "",
+    val ok: Boolean? = null,
+    val verificado: String? = null,
+)

@@ -56,6 +56,7 @@ Acciones:
 ### 2.3 Vista en vivo
 Por evento y punto: las últimas pasadas recibidas (dorsal, nombre, hora, punto, dispositivo, origen) y un contador por punto. Resaltar con un color:
 - `origen = manual` o `barras`: hora tomada a mano, requiere revisión.
+- `origen = memoria`: viene de la SD de la pistola, con precisión de 1 s.
 - Chips no inscritos.
 - `horaSincronizada = false`.
 
@@ -65,7 +66,7 @@ Por evento y punto: las últimas pasadas recibidas (dorsal, nombre, hora, punto,
 
 - **dispositivos_moviles**: `id` (el `dispositivoId` que envía la app, UUID), `nombre`, `operador`, `token_hash` (SHA-256), `evento_id`, `modo`, `punto`, `app_version`, `creado`, `ultimo_contacto`, `ultima_ip`, `revocado` (bool).
 - **codigos_vinculacion**: `codigo_hash`, `evento_id`, `modo`, `punto`, `vence`, `usado` (bool), `creado_por`.
-- **lecturas_moviles**: `id` (UUID de la app, **PRIMARY KEY o UNIQUE**), `dispositivo_id`, `evento_id`, `dorsal` (nullable), `chip`, `epc`, `punto`, `modo`, `hora_ms` (entero, epoch en ms), `primera_ms`, `ultima_ms`, `rssi` (nullable), `lecturas`, `origen` (`vivo`|`manual`|`barras`), `hora_sincronizada` (bool), `recibido`. Si NexCrono ya tiene una tabla de lecturas (por ejemplo, la del TimeSense), se puede usar esa con una columna `fuente = 'pistola'` y `punto`.
+- **lecturas_moviles**: `id` (UUID de la app, **PRIMARY KEY o UNIQUE**), `dispositivo_id`, `evento_id`, `dorsal` (nullable), `chip`, `epc`, `punto`, `modo`, `hora_ms` (entero, epoch en ms), `primera_ms`, `ultima_ms`, `rssi` (nullable), `lecturas`, `origen` (`vivo`|`manual`|`barras`|`memoria`), `hora_sincronizada` (bool), `recibido`. Si NexCrono ya tiene una tabla de lecturas (por ejemplo, la del TimeSense), se puede usar esa con una columna `fuente = 'pistola'` y `punto`.
 
 ---
 
@@ -164,7 +165,7 @@ Validar:
 - `id` es un UUID.
 - `evento` existe.
 - `modo` ∈ {SALIDA, CONTROL}.
-- `origen` ∈ {vivo, manual, barras}.
+- `origen` ∈ {vivo, manual, barras, memoria}.
 - `horaMs` es un entero razonable: dentro de ±2 días del evento.
 - Textos de 64 caracteres como máximo.
 - Como máximo **500 lecturas** y **2 MB** por petición.
@@ -186,6 +187,7 @@ Mientras no reciba un 2xx, la app reintenta cada 3 segundos.
 - **Puntos de control (`modo = CONTROL`):** registrar el paso por `punto` con `horaMs`. Si llegan varias pasadas del mismo atleta en el mismo punto, usar la **primera**, con la misma tolerancia que NexCrono usa para las vueltas. Estos pasos alimentan el **seguimiento en vivo por puntos de control** (versión 7.5) y los reportes de parciales.
 - `primeraMs` y `ultimaMs` están disponibles si alguna regla necesita la otra hora.
 - `origen = manual` o `barras`: marcar el tiempo como *tomado a mano* en los reportes.
+- `origen = memoria`: lecturas hechas con la pistola **sin conexión** y descargadas después desde su micro SD. La hora viene del reloj de la pistola (la app lo sincroniza en cada conexión) con precisión de **1 segundo**. Pueden llegar horas después de ocurridas: se integran igual, por hora y no por orden de llegada.
 - `horaSincronizada = false`: avisar en el panel, porque ese teléfono no logró sincronizar la hora.
 
 ---

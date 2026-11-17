@@ -22,7 +22,23 @@ interface DriverListener {
     fun onInfo(clave: String, valor: String)
     fun onLinea(linea: String, saliente: Boolean)
     fun onError(mensaje: String)
+    /** Lecturas descargadas de la memoria/SD de la pistola (EPC + hora del reloj de la pistola). */
+    fun onMemoria(lecturas: List<LecturaMemoria>, mensaje: String)
+    /** Resultado de «leer chip más cercano» (null = no hay chip a la vista). */
+    fun onChipCercano(epc: String?, rssi: Int?)
+    /** Resultado de grabar un EPC. */
+    fun onGrabacion(ok: Boolean, mensaje: String)
 }
+
+data class LecturaMemoria(val epc: String, val ts: Long)
+
+/** Configuración que la app aplica a la pistola cada vez que se conecta. */
+data class ConfigPistola(
+    val potencia: Int?,
+    val gatilloContinuo: Boolean,
+    val pitidoPistola: Boolean,
+    val horaCorregida: () -> Long,
+)
 
 /** Contrato común para cualquier marca de pistola. Para agregar una marca nueva se implementa esta interfaz. */
 interface RfidDriver {
@@ -37,8 +53,17 @@ interface RfidDriver {
     fun pedirBateria()
     fun fijarPotencia(dbm: Int?)
     fun enviarComando(cmd: String)
-    /** Devuelve false si este driver todavía no sabe descargar la memoria/SD de la pistola. */
+    /** Aplica la configuración (gatillo, potencia, reloj…). */
+    fun configurar(c: ConfigPistola)
+    /** Inicia la descarga de la memoria/SD; el resultado llega por onMemoria. false = no soportado. */
     fun leerMemoria(): Boolean
+    fun borrarMemoria(): Boolean
+    /** Graba la configuración en AUTO.TXT de la micro SD (se aplica cada vez que la pistola despierta). */
+    fun grabarAutorun(c: ConfigPistola): Boolean
+    /** Lee solo el chip con mejor señal, a baja potencia (para grabarlo). */
+    fun leerChipCercano(): Boolean
+    /** Escribe un EPC nuevo (mismo largo) en el chip cuyo EPC actual es [actual]. */
+    fun grabarEpc(actual: String, nuevo: String): Boolean
 }
 
 data class DriverInfo(val id: String, val nombre: String, val detalle: String, val disponible: Boolean)
@@ -162,5 +187,10 @@ class GenericSppDriver(private val l: DriverListener) : RfidDriver {
         l.onLinea(cmd, true)
         link.escribir(cmd + "\r\n")
     }
+    override fun configurar(c: ConfigPistola) {}
     override fun leerMemoria() = false
+    override fun borrarMemoria() = false
+    override fun grabarAutorun(c: ConfigPistola) = false
+    override fun leerChipCercano() = false
+    override fun grabarEpc(actual: String, nuevo: String) = false
 }

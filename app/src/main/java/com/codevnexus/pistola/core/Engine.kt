@@ -17,7 +17,9 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import com.codevnexus.pistola.MainActivity
 import com.codevnexus.pistola.R
+import com.codevnexus.pistola.driver.ConfigPistola
 import com.codevnexus.pistola.driver.DriverListener
+import com.codevnexus.pistola.driver.LecturaMemoria
 import com.codevnexus.pistola.driver.Drivers
 import com.codevnexus.pistola.driver.RfidDriver
 import com.codevnexus.pistola.service.LectorService
@@ -60,6 +62,10 @@ object Engine {
     val aviso = MutableStateFlow<Aviso?>(null)
     val vinculoPendiente = MutableStateFlow<Vinculo?>(null)
     val actualizacion = MutableStateFlow<Actualizacion?>(null)
+    /** Estado de la descarga de memoria/SD: null = sin actividad. */
+    val memoria = MutableStateFlow<String?>(null)
+    val grabacion = MutableStateFlow(Grabacion())
+    @Volatile private var epcEnGrabacion: String? = null
 
     @Volatile var desfaseReloj: Long? = null
     @Volatile private var tabla: Map<String, String> = emptyMap()
@@ -125,7 +131,7 @@ object Engine {
         ajustes.value = a
         Ajustes.guardar(app, a)
         if (a.chipModo != antes.chipModo || a.chipDigitos != antes.chipDigitos) reasignarPasadas()
-        if (a.potencia != antes.potencia) driver?.fijarPotencia(a.potencia)
+        if (a.potencia != antes.potencia && a.configurarPistola) driver?.fijarPotencia(a.potencia)
         if (a.servidor != antes.servidor) desfaseReloj = null
         sucio = true
     }
@@ -230,7 +236,6 @@ object Engine {
         val oyente = Oyente()
         val d = Drivers.crear(ajustes.value.driverId, oyente)
         oyente.dueno = d
-        d.fijarPotencia(ajustes.value.potencia)
         driver = d
         ultimoIntento = System.currentTimeMillis()
         val reintento = conexion.value.estado == Estado.RECONECTANDO
@@ -269,7 +274,144 @@ object Engine {
         driver?.pedirBateria()
     }
 
-    fun leerMemoria(): Boolean = driver?.leerMemoria() ?: false
+    fun leerMemoria(): Boolean {
+        val d = driver ?: return false
+        memoria.value = "Leyendo la memoria de la pistola…"
+        val ok = d.leerMemoria()
+        if (!ok) memoria.value = null
+        return ok
+    }
+
+    fun borrarMemoria(): Boolean {
+        val d = driver ?: return false
+        memoria.value = "Borrando la memoria de la pistola…"
+        return d.borrarMemoria()
+    }
+
+    private fun configActual(): ConfigPistola {
+        val a = ajustes.value
+        return ConfigPistola(a.potencia, a.gatilloContinuo, a.pitidoPistola) { ahoraCorregido() }
+    }
+
+    /** Graba la configuración en AUTO.TXT para que se aplique aunque la pistola se duerma y despierte sin el teléfono. */
+    fun grabarAutorun(): Boolean {
+        val d = driver ?: return false
+        if (!d.grabarAutorun(configActual())) return false
+        memoria.value = "Grabando la configuración en la pistola…"
+        return true
+    }
+
+    // ───────────── Grabar número en chips ─────────────
+
+    fun leerChipCercano(): Boolean {
+        val d = driver ?: return false
+        leyendo.value = false
+        if (!d.leerChipCercano()) return false
+        grabacion.value = grabacion.value.copy(ocupado = true, ok = null, mensaje = "Leyendo el chip más cercano…")
+        return true
+    }
+
+    /** EPC nuevo: prefijo hex + ceros + número, del mismo largo que el EPC actual. */
+    fun epcNuevo(actual: String, numero: String, prefijo: String): String? {
+        val p = prefijo.uppercase().filter { it in "0123456789ABCDEF" }
+        val n = numero.filter(Char::isDigit).trimStart('0').ifEmpty { if (numero.isNotEmpty()) "0" else "" }
+        if (n.isEmpty()) return null
+        val relleno = actual.length - p.length - n.length
+        if (relleno < 0) return null
+        return p + "0".repeat(relleno) + n
+    }
+
+    /** @return null si empezó a grabar, o el motivo por el que no se puede. */
+    fun grabarChip(numero: String, prefijo: String): String? {
+        val d = driver ?: return "Conecta la pistola"
+        val g = grabacion.value
+        val actual = g.epcActual ?: return "Primero lee el chip"
+        val nuevo = epcNuevo(actual, numero, prefijo) ?: return "El número no cabe en el EPC de este chip"
+        if (nuevo == actual) return "El chip ya tiene ese número"
+        if (!d.grabarEpc(actual, nuevo)) return "La pistola está ocupada o el EPC no es válido"
+        epcEnGrabacion = nuevo
+        grabacion.value = g.copy(ocupado = true, ok = null, mensaje = "Grabando $nuevo…")
+        return null
+    }
+
+    private fun alLeerChipCercano(epc: String?, rssi: Int?) {
+        val esperado = epcEnGrabacion
+        if (esperado != null) {                       // verificación tras grabar
+            epcEnGrabacion = null
+            grabacion.value = if (epc == esperado) {
+                Grabacion(
+                    ok = true, verificado = esperado,
+                    mensaje = "✔ Chip grabado y verificado. La app lo mostrará como ${decodificar(esperado)}.",
+                )
+            } else {
+                Grabacion(
+                    ok = false,
+                    mensaje = "Se escribió, pero al verificar se leyó ${epc ?: "ningún chip"}. Lee el chip otra vez para revisarlo.",
+                )
+            }
+            return
+        }
+        grabacion.value = Grabacion(
+            epcActual = epc, rssi = rssi,
+            mensaje = if (epc == null) "No hay ningún chip cerca de la antena" else "Chip leído",
+        )
+    }
+
+    private fun alGrabar(ok: Boolean, mensaje: String) {
+        if (ok) {
+            grabacion.value = grabacion.value.copy(ocupado = true, mensaje = "Grabado. Verificando…")
+            sched.schedule({ seguro { if (driver?.leerChipCercano() != true) alLeerChipCercano(null, null) } }, 300, TimeUnit.MILLISECONDS)
+        } else {
+            epcEnGrabacion = null
+            grabacion.value = grabacion.value.copy(ocupado = false, ok = false, mensaje = mensaje)
+        }
+    }
+
+    /**
+     * Convierte las lecturas guardadas en la pistola en pasadas (misma regla de ventana que en vivo)
+     * y las agrega al evento actual. Un id determinístico evita duplicados si se importa dos veces.
+     */
+    private fun importarMemoria(lecturas: List<LecturaMemoria>): String {
+        if (lecturas.isEmpty()) return "No había lecturas de chips en la memoria"
+        val a = ajustes.value
+        val ventana = a.ventanaSeg.coerceAtLeast(1) * 1000L
+        var nuevas = 0
+        var repetidas = 0
+        synchronized(this) {
+            for ((epc, lista) in lecturas.groupBy { it.epc }) {
+                val tiempos = lista.map { it.ts }.sorted()
+                var ini = 0
+                for (k in tiempos.indices) {
+                    val fin = k == tiempos.lastIndex || tiempos[k + 1] - tiempos[k] > ventana
+                    if (!fin) continue
+                    val primera = tiempos[ini]
+                    val ultima = tiempos[k]
+                    val id = UUID.nameUUIDFromBytes("mem|${a.dispositivoId}|$epc|$primera".toByteArray()).toString()
+                    if (db.existe(id)) {
+                        repetidas++
+                    } else {
+                        val chip = decodificar(epc)
+                        val i = buscarInscrito(epc, chip)
+                        val p = Pasada(
+                            id = id, evento = a.eventoId, epc = epc, chip = chip,
+                            dorsal = i?.dorsal, nombre = i?.nombre, categoria = i?.categoria,
+                            punto = a.nombrePunto, modo = a.modo, dispositivo = a.dispositivo,
+                            primera = primera, ultima = ultima, mejorTs = primera, rssi = null,
+                            lecturas = k - ini + 1, hora = primera, cerrada = true, enviado = false,
+                            origen = "memoria", sincronizado = desfaseReloj != null,
+                        )
+                        p.hora = horaSegunRegla(p)
+                        db.guardar(p)
+                        nuevas++
+                    }
+                    ini = k + 1
+                }
+            }
+        }
+        sucio = true
+        return "Importadas $nuevas pasadas al evento «${a.eventoNombre}»" +
+            (if (repetidas > 0) " ($repetidas ya estaban)" else "") + "."
+    }
 
     fun enviarComando(cmd: String) {
         if (cmd.isNotBlank()) driver?.enviarComando(cmd)
@@ -293,10 +435,20 @@ object Engine {
         }
         override fun onLinea(linea: String, saliente: Boolean) { Engine.log((if (saliente) "→ " else "← ") + linea) }
         override fun onError(mensaje: String) { if (vigente()) Engine.onError(mensaje) }
+        override fun onChipCercano(epc: String?, rssi: Int?) { if (vigente()) Engine.alLeerChipCercano(epc, rssi) }
+        override fun onGrabacion(ok: Boolean, mensaje: String) { if (vigente()) Engine.alGrabar(ok, mensaje) }
+        override fun onMemoria(lecturas: List<LecturaMemoria>, mensaje: String) {
+            if (!vigente()) return
+            Engine.memoria.value = if (lecturas.isEmpty()) mensaje else mensaje + "\n" + Engine.importarMemoria(lecturas)
+        }
     }
 
     private fun onConectado() {
         conexion.value = Conexion(Estado.CONECTADO, pistolaNombre, "Conectada", driver?.soportaComandos ?: true)
+        val a = ajustes.value
+        if (a.configurarPistola) {
+            driver?.configurar(configActual())
+        }
         actualizarInfo()
         // comandos de configuración propios (p. ej. comportamiento del gatillo)
         ajustes.value.comandosConectar.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }

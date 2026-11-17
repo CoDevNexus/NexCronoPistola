@@ -67,6 +67,9 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "pistola.db", null, 2) {
         writableDatabase.insertWithOnConflict("pasadas", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
+    fun existe(id: String): Boolean =
+        android.database.DatabaseUtils.queryNumEntries(readableDatabase, "pasadas", "id = ?", arrayOf(id)) > 0
+
     fun recientes(evento: String, limite: Int): List<Pasada> =
         consulta("SELECT * FROM pasadas WHERE evento = ? ORDER BY primera DESC LIMIT $limite", evento)
 
